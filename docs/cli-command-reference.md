@@ -8,8 +8,10 @@ Complete reference of all Veracode CLI commands used in this repository's templa
 - [Authentication](#authentication)
 - [Package Commands](#package-commands)
 - [Static Analysis Commands](#static-analysis-commands)
-- [SCA Commands](#sca-commands)
+- [SBOM Command](#sbom-command)
+- [SCA Agent (NOT Veracode CLI)](#important-sca-is-not-part-of-veracode-cli)
 - [Policy Commands](#policy-commands)
+- [Sandbox Commands](#sandbox-commands)
 - [Utility Commands](#utility-commands)
 - [Output Formats](#output-formats)
 - [Exit Codes](#exit-codes)
@@ -287,19 +289,98 @@ veracode static app delete \
 
 ---
 
-## SCA Commands
+## SBOM Command
 
-Software Composition Analysis for dependency scanning.
+### veracode sbom
 
-### veracode sca scan
+Generate Software Bill of Materials (SBOM) from containers, repositories, archives, or directories.
 
-Scan dependencies (using SCA Agent).
+**⚠️ Note:** This is different from the SCA Agent's `./ci.sh sbom` command. The Veracode CLI `veracode sbom` can generate SBOMs from various sources, not just SCA scans.
 
 ```bash
-# Via SCA Agent (ci.sh)
+veracode sbom \
+  --type <image|repo|archive|directory> \
+  --source <path-or-url> \
+  [--format <format>] \
+  [--output <file>]
+```
+
+**Flags:**
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--type` | | **Required**: Target type (`image`, `repo`, `archive`, `directory`) |
+| `--source` | `-s` | **Required**: SBOM source location |
+| `--format` | `-f` | Output format (see below) |
+| `--output` | `-o` | Output file path (default: stdout) |
+| `--help` | `-h` | Show help |
+
+**Supported Formats:**
+- `cyclonedx-json` (default)
+- `cyclonedx-xml`
+- `spdx-json`
+- `spdx-tag-value`
+- `github` (GitHub dependency snapshot)
+- `table`
+- `text`
+
+**Supported Container Images:**
+- Alpine Linux
+- Amazon Linux
+- CentOS
+- Debian
+- GitLab BusyBox
+- Distroless
+- Oracle Linux
+- RHEL
+- Ubuntu
+
+**Examples:**
+
+```bash
+# Container image
+veracode sbom --source alpine:latest --type image
+
+# Local directory
+veracode sbom --source ./my-app --type directory --format cyclonedx-json
+
+# Git repository
+veracode sbom --source https://github.com/veracode/veracode-sca --type repo
+
+# Archive with custom output
+veracode sbom \
+  --source myapp.zip \
+  --type archive \
+  --format spdx-json \
+  --output sbom.json
+```
+
+**Limitations:**
+- Limited SBOM output for Gradle projects that haven't been built
+
+**Documentation:** [veracode sbom](https://docs.veracode.com/r/veracode_sbom)
+
+---
+
+## IMPORTANT: SCA Is NOT Part of Veracode CLI
+
+**⚠️ The Veracode CLI does NOT have `veracode sca` commands.**
+
+Software Composition Analysis (SCA) uses the **SCA Agent** (`ci.sh`), which is a **separate tool** from the Veracode CLI.
+
+### SCA Agent (ci.sh)
+
+Download and use the SCA Agent for dependency scanning:
+
+```bash
+# Download SCA Agent
 curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
 chmod +x ci.sh
 
+# Set API token
+export SRCCLR_API_TOKEN="your-sca-token"
+
+# Run SCA scan
 ./ci.sh scan \
   --app <app-name> \
   [--allow-dirty] \
@@ -308,55 +389,12 @@ chmod +x ci.sh
   [--threshold-cve-severity <level>] \
   [--json] \
   [--recursive]
-```
 
-**Environment Variable:**
-```bash
-export SRCCLR_API_TOKEN="your-sca-token"
-```
-
-### veracode sca results
-
-Get SCA scan results.
-
-```bash
-veracode sca results \
-  --app <app-name> \
-  --format <json|table> \
-  [--output <file>]
-```
-
-### veracode sca vulnerabilities
-
-List vulnerabilities.
-
-```bash
-veracode sca vulnerabilities \
-  --app <app-name> \
-  --format <json|table|csv>
-```
-
-### veracode sca workspace list
-
-List SCA workspaces.
-
-```bash
-veracode sca workspace list
-```
-
-### veracode sbom
-
-Generate Software Bill of Materials.
-
-```bash
+# Generate SBOM
 ./ci.sh sbom \
   --format <cyclonedx|spdx> \
   --output <file>
 ```
-
-**SBOM Formats:**
-- CycloneDX 1.6
-- SPDX 2.3
 
 **SCA Agent Parameters:**
 
@@ -378,6 +416,17 @@ Generate Software Bill of Materials.
 | `--recursive` | Scan subdirectories |
 | `--no-upload` | Don't upload to platform |
 | `--quick` | Quick scan mode |
+
+**SBOM Formats:**
+- CycloneDX 1.6
+- SPDX 2.3
+
+**Key Differences:**
+- ❌ `veracode sca scan` - Does NOT exist
+- ❌ `veracode sca results` - Does NOT exist
+- ❌ `veracode sca vulnerabilities` - Does NOT exist
+- ✅ `./ci.sh scan` - Correct SCA Agent command
+- ✅ `./ci.sh sbom` - Correct SCA Agent command
 
 **Documentation:** [SCA Agent Documentation](https://docs.veracode.com/r/c_sc_what_is)
 
