@@ -5,19 +5,24 @@ This guide covers various methods for securely authenticating with Veracode in y
 ## Table of Contents
 
 1. [API Credentials Overview](#api-credentials-overview)
-2. [Credential Storage Best Practices](#credential-storage-best-practices)
-3. [Platform-Specific Configuration](#platform-specific-configuration)
-4. [Alternative Authentication Methods](#alternative-authentication-methods)
-5. [Security Considerations](#security-considerations)
+2. [SCA Agent Token (SRCCLR_API_TOKEN)](#sca-agent-token-srcclr_api_token)
+3. [Credential Storage Best Practices](#credential-storage-best-practices)
+4. [Platform-Specific Configuration](#platform-specific-configuration)
+5. [Alternative Authentication Methods](#alternative-authentication-methods)
+6. [Security Considerations](#security-considerations)
 
 ## API Credentials Overview
 
-Veracode API credentials consist of two components:
+Veracode uses different authentication methods depending on the scanning type:
+
+### Static Analysis API Credentials
+
+For **Static Analysis** (Pipeline Scan, Policy Scan, CLI operations), Veracode API credentials consist of two components:
 
 - **API ID**: A unique identifier (UUID format)
 - **API Key**: A secret key (64-character string)
 
-### Generating Credentials
+#### Generating API Credentials
 
 1. Log into [Veracode Platform](https://analysiscenter.veracode.com/)
 2. Navigate to **Account** → **My Profile** → **API Credentials**
@@ -25,6 +30,64 @@ Veracode API credentials consist of two components:
 4. Securely store both the API ID and API Key immediately
 
 **Warning**: The API Key is only displayed once. Store it securely.
+
+## SCA Agent Token (SRCCLR_API_TOKEN)
+
+For **Software Composition Analysis** (SCA Agent-based scans), you need a different authentication token.
+
+### What is SRCCLR_API_TOKEN?
+
+The SRCCLR_API_TOKEN is an agent authentication token that acts as a password to connect your CI/CD pipeline to Veracode during SCA scans. This token is separate from the Veracode API credentials used for static analysis.
+
+### Obtaining Your SCA Agent Token
+
+1. Log into [Veracode Platform](https://analysiscenter.veracode.com/)
+2. Navigate to **Scans & Analysis** → **Software Composition Analysis**
+3. Select **Agent-Based Scan**
+4. Select a **Workspace** (or create one if needed)
+5. Select **Agents** → **Actions** → **Create**
+6. Select any option from the Integration Options section
+7. Click **Create Agent & Generate Token**
+8. **Copy the token value immediately** - it will only be displayed once
+
+**Critical**: If you close the page without copying the token, it disappears permanently and you must regenerate it.
+
+### Regenerating SCA Tokens
+
+If your token is compromised or lost:
+
+1. Navigate to **Scans & Analysis** → **Software Composition Analysis** → **Agent-Based Scan**
+2. Select the **Agents** page (workspace or organization level)
+3. Select the agent
+4. Click **Regenerate Token**
+5. Copy the newly displayed token
+
+**Warning**: Regenerating invalidates the old token. Any CI/CD pipelines using the old token will fail.
+
+### Required Permissions
+
+- **Organization-level agent**: Security Lead role
+- **Workspace agent**: Security Lead, Workspace Administrator, Workspace Editor, or Submitter role
+
+### Regional Configuration
+
+For non-commercial regions, set additional environment variables alongside SRCCLR_API_TOKEN:
+
+- **European Region**: `SRCCLR_REGION=ER`
+- **US Federal Region**: `SRCCLR_REGION=FED`
+
+### Security Best Practices for SCA Tokens
+
+- ✅ **DO**: Store as a secret in your CI/CD platform
+- ✅ **DO**: Copy the token immediately when generated
+- ✅ **DO**: Regenerate if compromise is suspected
+- ✅ **DO**: Use workspace-level tokens when possible (limited scope)
+- ❌ **DON'T**: Share tokens across teams unnecessarily
+- ❌ **DON'T**: Commit tokens to version control
+- ❌ **DON'T**: Log or echo tokens in pipeline output
+- ❌ **DON'T**: Use organization-level tokens unless required
+
+**Security Note**: Token compromise is serious. With workspace agents, attackers can taint scan data. With organization agents, they can scan into any accessible workspace.
 
 ## Credential Storage Best Practices
 
@@ -54,6 +117,7 @@ This provides better audit trails and limits blast radius if credentials are com
 
 #### Option 1: Variable Groups (Recommended)
 
+**For Static Analysis:**
 ```yaml
 variables:
   - group: 'veracode-credentials'
@@ -76,12 +140,42 @@ Setup:
 3. Add `VERACODE_API_ID` and `VERACODE_API_KEY`
 4. Lock the API Key variable
 
+**For SCA Scans:**
+```yaml
+variables:
+  - group: 'veracode-sca-credentials'
+
+steps:
+  - task: Bash@3
+    inputs:
+      targetType: 'inline'
+      script: |
+        curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+        chmod +x ci.sh
+        ./ci.sh scan --app my-app
+    env:
+      SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+```
+
+Setup:
+1. Pipelines → Library → Variable groups
+2. Create group named `veracode-sca-credentials`
+3. Add `SRCCLR_API_TOKEN` (obtained from Veracode Platform → SCA → Agent-Based Scan)
+4. Lock the token variable (mark as secret)
+
 #### Option 2: Pipeline Variables
 
+**For Static Analysis:**
 ```yaml
 variables:
   VERACODE_API_ID: $(veracode-api-id)
   VERACODE_API_KEY: $(veracode-api-key)
+```
+
+**For SCA Scans:**
+```yaml
+variables:
+  SRCCLR_API_TOKEN: $(srcclr-api-token)
 ```
 
 Setup:
@@ -92,6 +186,7 @@ Setup:
 
 #### Using Repository Secrets
 
+**For Static Analysis:**
 ```yaml
 jobs:
   scan:
@@ -108,7 +203,27 @@ jobs:
 Setup:
 1. Repository Settings → Secrets and variables → Actions
 2. New repository secret
-3. Add both credentials
+3. Add `VERACODE_API_ID` and `VERACODE_API_KEY`
+
+**For SCA Scans:**
+```yaml
+jobs:
+  sca-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Veracode SCA Scan
+        env:
+          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+        run: |
+          curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          chmod +x ci.sh
+          ./ci.sh scan --app my-app
+```
+
+Setup:
+1. Repository Settings → Secrets and variables → Actions
+2. New repository secret
+3. Add `SRCCLR_API_TOKEN` (obtained from Veracode Platform → SCA → Agent-Based Scan → Create Agent)
 
 #### Using Environment Secrets (for different environments)
 
@@ -134,6 +249,7 @@ Setup:
 
 #### Using CI/CD Variables
 
+**For Static Analysis:**
 ```yaml
 veracode-scan:
   script:
@@ -152,16 +268,35 @@ Setup:
    - Flags: Protected, Masked
 3. Repeat for `VERACODE_API_KEY`
 
+**For SCA Scans:**
+```yaml
+sca-scan:
+  script:
+    - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+    - chmod +x ci.sh
+    - ./ci.sh scan --app my-app
+  variables:
+    SRCCLR_API_TOKEN: $SRCCLR_API_TOKEN
+```
+
+Setup:
+1. Settings → CI/CD → Variables → Expand
+2. Add variable
+   - Key: `SRCCLR_API_TOKEN`
+   - Value: Your SCA agent token (from Veracode Platform → SCA → Agent-Based Scan)
+   - Flags: Protected, Masked
+
 #### Group-Level Variables (for multiple projects)
 
 1. Group Settings → CI/CD → Variables
-2. Add variables at group level
+2. Add variables at group level (`VERACODE_API_ID`, `VERACODE_API_KEY`, `SRCCLR_API_TOKEN`)
 3. All projects in group inherit these variables
 
 ### Bitbucket Pipelines
 
 #### Repository Variables
 
+**For Static Analysis:**
 ```yaml
 pipelines:
   default:
@@ -183,10 +318,30 @@ Setup:
    - Value: Your API Key
    - Secured: Yes
 
+**For SCA Scans:**
+```yaml
+pipelines:
+  default:
+    - step:
+        name: SCA Scan
+        script:
+          - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          - chmod +x ci.sh
+          - ./ci.sh scan --app my-app
+```
+
+Setup:
+1. Repository settings → Pipelines → Repository variables
+2. Add variable
+   - Name: `SRCCLR_API_TOKEN`
+   - Value: Your SCA agent token (from Veracode Platform → SCA → Agent-Based Scan)
+   - Secured: Yes
+
 #### Workspace Variables (for multiple repositories)
 
 1. Workspace settings → Workspace variables
 2. Variables available to all repositories in workspace
+3. Add `VERACODE_API_ID`, `VERACODE_API_KEY`, and `SRCCLR_API_TOKEN` as needed
 
 ## Alternative Authentication Methods
 
@@ -287,10 +442,21 @@ Ensure your credential management meets:
 
 ## Resources
 
+### Static Analysis API Documentation
 - [Veracode API Documentation](https://docs.veracode.com/r/Veracode_APIs)
 - [API Credentials Management](https://docs.veracode.com/r/c_api_credentials3)
+
+### SCA Agent Token Documentation
+- [Manage Agents and Scans](https://docs.veracode.com/r/Manage_agents_and_scans)
+- [Create Veracode SCA Agents](https://docs.veracode.com/r/Create_Veracode_SCA_Agents)
+- [Regenerate SCA Agent Tokens](https://docs.veracode.com/r/Regenerate_Veracode_SCA_Agent_Tokens)
+- [SCA Agent Environment Variables](https://docs.veracode.com/r/Veracode_SCA_Agent_Environment_Variables)
+- [Integrate SCA with CI Projects](https://docs.veracode.com/r/Integrate_Veracode_SCA_Agent_Based_Scanning_with_Your_CI_Projects)
+
+### General Resources
 - [Veracode Security Best Practices](https://docs.veracode.com/r/Veracode_Best_Practices)
+- [Agent-Based Scans](https://docs.veracode.com/r/Agent_Based_Scans)
 
 ---
 
-**Security Reminder**: Never commit credentials to version control, even in private repositories.
+**Security Reminder**: Never commit credentials or tokens to version control, even in private repositories. Always use your CI/CD platform's secrets management.

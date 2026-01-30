@@ -35,13 +35,47 @@ stages:
 # ============================================================================
 # VARIABLES
 # ============================================================================
-# Store SRCCLR_API_TOKEN in GitLab: Settings → CI/CD → Variables
-# Get token from Veracode Platform → Agent-Based Scan → Tokens
+# SRCCLR_API_TOKEN Setup Instructions:
+#
+# 1. Obtain Your SCA Agent Token:
+#    - Log into Veracode Platform (https://analysiscenter.veracode.com/)
+#    - Navigate to: Scans & Analysis → Software Composition Analysis
+#    - Select: Agent-Based Scan
+#    - Select a Workspace (or create one)
+#    - Select: Agents → Actions → Create
+#    - Select any Integration Option
+#    - Click: Create Agent & Generate Token
+#    - COPY THE TOKEN IMMEDIATELY - it only displays once!
+#
+# 2. Store Token in GitLab:
+#    - Go to: Settings → CI/CD → Variables → Expand
+#    - Click: Add variable
+#    - Key: SRCCLR_API_TOKEN
+#    - Value: (paste token from step 1)
+#    - Type: Variable
+#    - Flags: ✓ Protected, ✓ Masked
+#    - Click: Add variable
+#
+# 3. Required Permissions:
+#    - Organization agent: Security Lead role
+#    - Workspace agent: Security Lead, Workspace Admin, Workspace Editor, or Submitter
+#
+# 4. Alternative - Group-Level Variables:
+#    - For multiple projects: Group Settings → CI/CD → Variables
+#    - All projects in group will inherit the variable
+#
+# 5. Regional Configuration (if applicable):
+#    - European Region: Add SRCCLR_REGION variable with value: ER
+#    - US Federal Region: Add SRCCLR_REGION variable with value: FED
+#
+# Documentation: https://docs.veracode.com/r/Manage_agents_and_scans
 # ============================================================================
 
 variables:
   APP_NAME: "my-application"
   FAIL_ON_VULNERABILITY: "true"
+  # Regional configuration (uncomment if needed)
+  # SRCCLR_REGION: "ER"  # For European region (or "FED" for US Federal)
 
 # ============================================================================
 # SCA SCAN JOB

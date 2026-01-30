@@ -65,6 +65,43 @@ on:
 
 env:
   APP_NAME: 'my-application'
+  # Regional configuration (uncomment if needed)
+  # SRCCLR_REGION: 'ER'  # For European region (or 'FED' for US Federal)
+
+# ============================================================================
+# SRCCLR_API_TOKEN SETUP INSTRUCTIONS
+# ============================================================================
+# This workflow requires a Veracode SCA Agent token stored as a GitHub Secret.
+#
+# 1. Obtain Your SCA Agent Token:
+#    - Log into Veracode Platform (https://analysiscenter.veracode.com/)
+#    - Navigate to: Scans & Analysis → Software Composition Analysis
+#    - Select: Agent-Based Scan
+#    - Select a Workspace (or create one)
+#    - Select: Agents → Actions → Create
+#    - Select any Integration Option
+#    - Click: Create Agent & Generate Token
+#    - COPY THE TOKEN IMMEDIATELY - it only displays once!
+#
+# 2. Store Token in GitHub:
+#    - Go to: Repository Settings → Secrets and variables → Actions
+#    - Click: New repository secret
+#    - Name: SRCCLR_API_TOKEN
+#    - Value: (paste token from step 1)
+#    - Click: Add secret
+#
+# 3. Required Permissions:
+#    - Organization agent: Security Lead role
+#    - Workspace agent: Security Lead, Workspace Admin, Workspace Editor, or Submitter
+#
+# 4. Alternative - Organization/Environment Secrets:
+#    - For org-wide use: Organization Settings → Secrets and variables → Actions
+#    - For specific environments: Repository Settings → Environments → Create → Secrets
+#
+# Documentation:
+# - Token Management: https://docs.veracode.com/r/Manage_agents_and_scans
+# - GitHub Secrets: https://docs.github.com/en/actions/security-guides/encrypted-secrets
+# ============================================================================
 
 jobs:
   # ==========================================================================
@@ -496,9 +533,15 @@ jobs:
 # Common Issues:
 #
 # 1. Token Authentication:
-#    - Get token from Veracode Platform → Agent-Based Scan
-#    - Store as SRCCLR_API_TOKEN in GitHub Secrets
-#    - Verify token hasn't expired
+#    Problem: "401 Unauthorized" or "Authentication failed"
+#    Solution:
+#    - Get token from: Platform → SCA → Agent-Based Scan → Create Agent
+#    - Store as SRCCLR_API_TOKEN in GitHub repository/organization secrets
+#    - Tokens don't expire, but regenerating invalidates the old token
+#    - If token was regenerated, update the GitHub secret with new value
+#    - Verify the secret name is exactly: SRCCLR_API_TOKEN (case-sensitive)
+#    - Check you have required permissions (see setup instructions above)
+#    - For regional deployments, set SRCCLR_REGION environment variable (ER or FED)
 #
 # 2. No Vulnerabilities Detected:
 #    - Ensure dependency files exist (package.json, pom.xml, etc.)

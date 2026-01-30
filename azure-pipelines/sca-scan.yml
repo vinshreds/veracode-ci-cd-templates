@@ -45,13 +45,44 @@ pool:
 # ============================================================================
 # VARIABLES CONFIGURATION
 # ============================================================================
-# Store SRCCLR_API_TOKEN in Azure Pipeline variables (mark as secret)
-# You can get this token from Veracode Platform → Agent-Based Scan → Tokens
+# SRCCLR_API_TOKEN Setup Instructions:
+#
+# 1. Obtain Your SCA Agent Token:
+#    - Log into Veracode Platform (https://analysiscenter.veracode.com/)
+#    - Navigate to: Scans & Analysis → Software Composition Analysis
+#    - Select: Agent-Based Scan
+#    - Select a Workspace (or create one)
+#    - Select: Agents → Actions → Create
+#    - Select any Integration Option
+#    - Click: Create Agent & Generate Token
+#    - COPY THE TOKEN IMMEDIATELY - it only displays once!
+#
+# 2. Store Token in Azure DevOps:
+#    - Option 1 (Recommended): Variable Groups
+#      * Pipelines → Library → Variable groups
+#      * Create group: 'veracode-sca-credentials'
+#      * Add variable: SRCCLR_API_TOKEN (value from step 1)
+#      * Lock variable (mark as secret)
+#
+#    - Option 2: Pipeline Variables
+#      * Edit Pipeline → Variables
+#      * Add: srcclr-api-token (value from step 1)
+#      * Lock variable with lock icon
+#
+# 3. Required Permissions:
+#    - Organization agent: Security Lead role
+#    - Workspace agent: Security Lead, Workspace Admin, Workspace Editor, or Submitter
+#
+# 4. Regional Configuration (if applicable):
+#    - European Region: Add SRCCLR_REGION=ER
+#    - US Federal Region: Add SRCCLR_REGION=FED
+#
+# Documentation: https://docs.veracode.com/r/Manage_agents_and_scans
 # ============================================================================
 
 variables:
-  # Option 1: Use variable group
-  # - group: 'veracode-credentials'
+  # Option 1: Use variable group (Recommended)
+  # - group: 'veracode-sca-credentials'
 
   # Option 2: Reference pipeline variable
   SRCCLR_API_TOKEN: $(srcclr-api-token)
@@ -62,6 +93,9 @@ variables:
   # SCA configuration
   FAIL_ON_VULNERABILITY: 'true'  # Fail build on vulnerabilities
   VULNERABILITY_SEVERITY: 'high'  # Minimum severity to fail: low, medium, high, critical
+
+  # Regional configuration (uncomment if needed)
+  # SRCCLR_REGION: 'ER'  # For European region (or 'FED' for US Federal)
 
 stages:
   - stage: Dependencies
@@ -384,10 +418,15 @@ stages:
 # Common Issues:
 #
 # 1. Authentication Errors:
-#    - Verify SRCCLR_API_TOKEN is set correctly
-#    - Token should be from Agent-Based Scan section in Veracode
-#    - Ensure token is marked as "secret" in pipeline variables
-#    - Check token hasn't expired
+#    Problem: "401 Unauthorized" or "Authentication failed"
+#    Solution:
+#    - Verify SRCCLR_API_TOKEN is set correctly in pipeline variables
+#    - Token must be from: Platform → SCA → Agent-Based Scan → Create Agent
+#    - Ensure token is marked as "secret" (locked) in Azure DevOps variables
+#    - Tokens don't expire, but can be regenerated (which invalidates old token)
+#    - If token was regenerated, update pipeline variable with new value
+#    - Check you have required permissions (Security Lead or Workspace Editor/Admin)
+#    - For regional deployments, ensure SRCCLR_REGION is set (ER or FED)
 #
 # 2. No Dependencies Found:
 #    - Ensure dependency manifest files exist (pom.xml, package.json, etc.)

@@ -25,6 +25,44 @@
 # ============================================================================
 
 # ============================================================================
+# SRCCLR_API_TOKEN SETUP INSTRUCTIONS
+# ============================================================================
+# This pipeline requires a Veracode SCA Agent token stored as a Bitbucket variable.
+#
+# 1. Obtain Your SCA Agent Token:
+#    - Log into Veracode Platform (https://analysiscenter.veracode.com/)
+#    - Navigate to: Scans & Analysis → Software Composition Analysis
+#    - Select: Agent-Based Scan
+#    - Select a Workspace (or create one)
+#    - Select: Agents → Actions → Create
+#    - Select any Integration Option
+#    - Click: Create Agent & Generate Token
+#    - COPY THE TOKEN IMMEDIATELY - it only displays once!
+#
+# 2. Store Token in Bitbucket:
+#    - Go to: Repository settings → Pipelines → Repository variables
+#    - Click: Add variable
+#    - Name: SRCCLR_API_TOKEN
+#    - Value: (paste token from step 1)
+#    - Secured: ✓ (check this box)
+#    - Click: Add
+#
+# 3. Required Permissions:
+#    - Organization agent: Security Lead role
+#    - Workspace agent: Security Lead, Workspace Admin, Workspace Editor, or Submitter
+#
+# 4. Alternative - Workspace Variables:
+#    - For multiple repositories: Workspace settings → Workspace variables
+#    - All repositories in workspace will have access
+#
+# 5. Regional Configuration (if applicable):
+#    - European Region: Add SRCCLR_REGION variable with value: ER
+#    - US Federal Region: Add SRCCLR_REGION variable with value: FED
+#
+# Documentation: https://docs.veracode.com/r/Manage_agents_and_scans
+# ============================================================================
+
+# ============================================================================
 # GLOBAL CONFIGURATION
 # ============================================================================
 
