@@ -1,0 +1,433 @@
+# ============================================================================
+# Veracode Pipeline Scan (SAST) - Bitbucket Pipelines Template
+# ============================================================================
+# This template demonstrates how to integrate Veracode Pipeline Scan into
+# your Bitbucket Pipelines for fast Static Application Security Testing.
+#
+# Pipeline Scan provides results in minutes (vs hours for Policy Scan) and is
+# ideal for shift-left security in CI/CD workflows.
+#
+# Prerequisites:
+# - Veracode API credentials stored in Bitbucket repository variables:
+#   - VERACODE_API_ID (secured)
+#   - VERACODE_API_KEY (secured)
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode Pipeline Scanner (downloaded during pipeline execution)
+#
+# Usage:
+# Copy this content into your bitbucket-pipelines.yml file or merge with existing config
+#
+# Documentation: https://docs.veracode.com/r/c_about_pipeline_scan
+# ============================================================================
+
+# ============================================================================
+# GLOBAL CONFIGURATION
+# ============================================================================
+
+image: maven:3.9-eclipse-temurin-11  # Default image, customize as needed
+
+# ============================================================================
+# DEFINITIONS
+# ============================================================================
+# Reusable pipeline components
+# ============================================================================
+
+definitions:
+  # Caches for faster builds
+  caches:
+    maven: ~/.m2/repository
+    gradle: ~/.gradle/caches
+    npm: node_modules
+
+  # ========================================================================
+  # VERACODE PIPELINE SCAN STEP (Reusable)
+  # ========================================================================
+  # This is a reusable step that can be included in multiple pipelines
+  # ========================================================================
+
+  steps:
+    - step: &build-application
+        name: Build Application
+        # ================================================================
+        # BUILD BLOCK - Customize for your application
+        # ================================================================
+
+        script:
+          - echo "Building application..."
+
+          # Example: Maven build
+          - mvn clean package -DskipTests
+
+          # Example: Gradle build
+          # - ./gradlew build -x test
+
+          # Example: npm build
+          # - npm ci
+          # - npm run build
+
+          # Example: .NET build
+          # - apt-get update && apt-get install -y dotnet-sdk-7.0
+          # - dotnet restore
+          # - dotnet publish -c Release -o ./publish
+
+          - echo "Build completed successfully"
+          - ls -la target/  # Verify build artifacts
+
+        # Preserve build artifacts for security scan
+        artifacts:
+          - target/**  # Customize path to your build output
+          # Additional paths:
+          # - build/libs/**
+          # - dist/**
+          # - publish/**
+
+        # Cache dependencies for faster builds
+        caches:
+          - maven
+          # - gradle
+          # - npm
+
+    - step: &veracode-pipeline-scan
+        name: Veracode Pipeline Scan
+        image: openjdk:11-jdk-slim  # Java runtime for Pipeline Scanner
+
+        # ================================================================
+        # SETUP BLOCK - Download Veracode Pipeline Scanner
+        # ================================================================
+
+        script:
+          - echo "Setting up Veracode Pipeline Scanner..."
+          - apt-get update && apt-get install -y curl unzip
+
+          # Download Veracode Pipeline Scanner
+          - curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+          - unzip -o pipeline-scan-LATEST.zip
+          - ls -la pipeline-scan.jar
+
+          # ============================================================
+          # SCAN BLOCK - Execute Veracode Pipeline Scan
+          # ============================================================
+          # This runs the actual security scan on your application
+          #
+          # Key Parameters:
+          # - veracode_api_id: Your Veracode API ID (from repo variables)
+          # - veracode_api_key: Your Veracode API Key (from repo variables)
+          # - file: Path to the file to scan (JAR, WAR, ZIP, etc.)
+          # - fail_on_severity: Fail build on specified severities
+          # - fail_on_cwe: Fail build on specific CWE IDs
+          # ============================================================
+
+          - echo "Starting Veracode Pipeline Scan..."
+          - mkdir -p veracode-results
+
+          - |
+            java -jar pipeline-scan.jar \
+              --veracode_api_id "$VERACODE_API_ID" \
+              --veracode_api_key "$VERACODE_API_KEY" \
+              --file "target/*.jar" \
+              --project_name "${BITBUCKET_REPO_SLUG}" \
+              --project_url "${BITBUCKET_GIT_HTTP_ORIGIN}" \
+              --project_ref "${BITBUCKET_BRANCH}" \
+              --fail_on_severity="Very High, High" \
+              --json_output_file "veracode-results/results.json" \
+              --summary_output \
+              --summary_output_file "veracode-results/summary.json" \
+              || SCAN_EXIT_CODE=$?
+
+          # Display scan summary
+          - echo "Scan completed. Summary:"
+          - cat veracode-results/summary.json || true
+
+          # Exit with scan status (fail build on high severity findings)
+          - exit ${SCAN_EXIT_CODE:-0}
+
+        # ================================================================
+        # RESULTS BLOCK - Preserve scan results as artifacts
+        # ================================================================
+
+        artifacts:
+          - veracode-results/**
+
+    - step: &veracode-baseline-scan
+        name: Veracode Pipeline Scan (with Baseline)
+        image: openjdk:11-jdk-slim
+
+        script:
+          - echo "Setting up Veracode Pipeline Scanner..."
+          - apt-get update && apt-get install -y curl unzip
+          - curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+          - unzip -o pipeline-scan-LATEST.zip
+          - mkdir -p veracode-results
+
+          # Download baseline file (customize based on your storage)
+          # Option 1: From Bitbucket Downloads
+          # - curl -o baseline.json "${BITBUCKET_GIT_HTTP_ORIGIN}/downloads/baseline.json"
+          # Option 2: From external storage
+          # - curl -o baseline.json https://your-storage/baseline.json
+
+          - echo "Running Pipeline Scan with baseline comparison..."
+          - |
+            java -jar pipeline-scan.jar \
+              --veracode_api_id "$VERACODE_API_ID" \
+              --veracode_api_key "$VERACODE_API_KEY" \
+              --file "target/*.jar" \
+              --baseline_file "baseline.json" \
+              --fail_on_severity="Very High, High" \
+              --json_output_file "veracode-results/results.json"
+
+        artifacts:
+          - veracode-results/**
+
+# ============================================================================
+# PIPELINES
+# ============================================================================
+
+pipelines:
+  # ========================================================================
+  # DEFAULT PIPELINE
+  # ========================================================================
+  # Runs on all branches not matching other pipeline definitions
+  # ========================================================================
+
+  default:
+    - step: *build-application
+    - step: *veracode-pipeline-scan
+
+  # ========================================================================
+  # BRANCH-SPECIFIC PIPELINES
+  # ========================================================================
+
+  branches:
+    # Main branch - run full security scan
+    main:
+      - step: *build-application
+      - step: *veracode-pipeline-scan
+
+    # Develop branch - run security scan
+    develop:
+      - step: *build-application
+      - step: *veracode-pipeline-scan
+
+    # Feature branches - run security scan
+    feature/*:
+      - step: *build-application
+      - step: *veracode-pipeline-scan
+
+  # ========================================================================
+  # PULL REQUEST PIPELINE
+  # ========================================================================
+  # Runs when pull requests are created or updated
+  # ========================================================================
+
+  pull-requests:
+    '**':  # All pull requests
+      - step: *build-application
+      - step: *veracode-pipeline-scan
+
+  # ========================================================================
+  # TAG PIPELINE
+  # ========================================================================
+  # Runs when tags are created (e.g., releases)
+  # ========================================================================
+
+  tags:
+    'v*':  # Tags matching v* (e.g., v1.0.0)
+      - step: *build-application
+      - step:
+          <<: *veracode-pipeline-scan
+          name: Veracode Release Scan
+          # Stricter criteria for releases
+          script:
+            - apt-get update && apt-get install -y curl unzip
+            - curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+            - unzip -o pipeline-scan-LATEST.zip
+            - mkdir -p veracode-results
+            - |
+              java -jar pipeline-scan.jar \
+                --veracode_api_id "$VERACODE_API_ID" \
+                --veracode_api_key "$VERACODE_API_KEY" \
+                --file "target/*.jar" \
+                --fail_on_severity="Medium, High, Very High" \
+                --json_output_file "veracode-results/results.json"
+
+  # ========================================================================
+  # CUSTOM PIPELINE (Manual Trigger)
+  # ========================================================================
+  # Can be triggered manually from Bitbucket UI
+  # ========================================================================
+
+  custom:
+    security-scan-only:
+      - step: *build-application
+      - step: *veracode-pipeline-scan
+
+    security-scan-with-baseline:
+      - step: *build-application
+      - step: *veracode-baseline-scan
+
+# ============================================================================
+# ADVANCED CONFIGURATION EXAMPLES
+# ============================================================================
+
+# ============================================================================
+# EXAMPLE: Multi-stage Pipeline with Parallel Scans
+# ============================================================================
+# Uncomment to run multiple security scans in parallel
+# ============================================================================
+
+# pipelines:
+#   default:
+#     - step: *build-application
+#     - parallel:
+#       - step: *veracode-pipeline-scan
+#       - step:
+#           name: Other Security Scan
+#           script:
+#             - echo "Running additional security scan..."
+
+# ============================================================================
+# EXAMPLE: Conditional Scan (Only on Specific File Changes)
+# ============================================================================
+# Run security scan only when specific files change
+# ============================================================================
+
+# pipelines:
+#   default:
+#     - step: *build-application
+#     - step:
+#         <<: *veracode-pipeline-scan
+#         condition:
+#           changesets:
+#             includePaths:
+#               - "src/**"
+#               - "pom.xml"
+
+# ============================================================================
+# EXAMPLE: Pipeline with Deployment After Clean Scan
+# ============================================================================
+# Deploy only if security scan passes
+# ============================================================================
+
+# pipelines:
+#   branches:
+#     main:
+#       - step: *build-application
+#       - step: *veracode-pipeline-scan
+#       - step:
+#           name: Deploy to Production
+#           deployment: production
+#           script:
+#             - echo "Deploying to production..."
+#             - echo "Security scan passed - safe to deploy"
+
+# ============================================================================
+# EXAMPLE: Scheduled Pipeline for Regular Scans
+# ============================================================================
+# Configure in Bitbucket UI: Repository settings → Pipelines → Schedules
+# ============================================================================
+
+# pipelines:
+#   custom:
+#     scheduled-security-scan:
+#       - step: *build-application
+#       - step:
+#           <<: *veracode-pipeline-scan
+#           name: Scheduled Security Scan
+#           # More comprehensive scan for scheduled runs
+#           script:
+#             - apt-get update && apt-get install -y curl unzip
+#             - curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+#             - unzip -o pipeline-scan-LATEST.zip
+#             - mkdir -p veracode-results
+#             - |
+#               java -jar pipeline-scan.jar \
+#                 --veracode_api_id "$VERACODE_API_ID" \
+#                 --veracode_api_key "$VERACODE_API_KEY" \
+#                 --file "target/*.jar" \
+#                 --fail_on_severity="Low, Medium, High, Very High" \
+#                 --timeout 120 \
+#                 --json_output_file "veracode-results/results.json"
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# Severity Levels (for --fail_on_severity):
+# - "Very High"
+# - "High"
+# - "Medium"
+# - "Low"
+# - "Very Low"
+# - "Informational"
+#
+# Common CWE IDs (for --fail_on_cwe):
+# - 79: Cross-Site Scripting (XSS)
+# - 89: SQL Injection
+# - 78: OS Command Injection
+# - 22: Path Traversal
+# - 352: Cross-Site Request Forgery (CSRF)
+# - 798: Use of Hard-coded Credentials
+#
+# Usage Examples:
+# --fail_on_severity="Very High, High"
+# --fail_on_cwe="79,89,78"
+#
+# Additional Pipeline Scanner Options:
+# --timeout: Maximum scan time in minutes (default: 60)
+# --include: Additional files to include in scan
+# --exclude: Files to exclude from scan
+# --development_stage: Development stage (Development/Testing/Release)
+# --baseline_file: JSON file from previous scan for comparison
+#
+# Bitbucket-specific Variables:
+# - BITBUCKET_REPO_SLUG: Repository name
+# - BITBUCKET_BRANCH: Current branch name
+# - BITBUCKET_COMMIT: Current commit hash
+# - BITBUCKET_BUILD_NUMBER: Build number
+# - BITBUCKET_GIT_HTTP_ORIGIN: Repository URL
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Authentication Errors:
+#    - Verify VERACODE_API_ID and VERACODE_API_KEY are set in repository variables
+#    - Navigate to: Repository settings → Pipelines → Repository variables
+#    - Ensure VERACODE_API_KEY is marked as "Secured"
+#    - Check API credentials haven't expired in Veracode Platform
+#
+# 2. File Not Found:
+#    - Verify artifact paths match between build and scan steps
+#    - Check that build step completes successfully
+#    - Ensure artifacts are properly configured
+#    - Verify file glob patterns are correct (e.g., target/*.jar)
+#
+# 3. Pipeline Failures:
+#    - Review pipeline logs for detailed error messages
+#    - Check if --fail_on_severity threshold is appropriate
+#    - Verify uploaded file is a valid application package
+#    - Ensure sufficient pipeline resources
+#
+# 4. Step Configuration:
+#    - Verify YAML anchors and aliases are correctly defined
+#    - Check that reusable steps are properly referenced with *
+#    - Ensure proper indentation (Bitbucket is strict about YAML syntax)
+#
+# 5. Artifact Issues:
+#    - Verify artifact paths exist after build
+#    - Check artifact size limits (Bitbucket has size restrictions)
+#    - Ensure artifacts persist between steps
+#
+# 6. Network/Download Issues:
+#    - Verify runner has internet access to download Pipeline Scanner
+#    - Check corporate firewall/proxy settings
+#    - Ensure downloads.veracode.com is accessible
+#
+# For more help:
+# - Veracode: https://docs.veracode.com/r/c_pipeline_scan_commands
+# - Bitbucket: https://support.atlassian.com/bitbucket-cloud/docs/get-started-with-bitbucket-pipelines/
+# ============================================================================

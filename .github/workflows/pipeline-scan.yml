@@ -1,0 +1,440 @@
+# ============================================================================
+# Veracode Pipeline Scan (SAST) - GitHub Actions Workflow
+# ============================================================================
+# This workflow demonstrates how to integrate Veracode Pipeline Scan into
+# your GitHub Actions pipeline for fast Static Application Security Testing.
+#
+# Pipeline Scan provides results in minutes (vs hours for Policy Scan) and is
+# ideal for shift-left security in CI/CD workflows.
+#
+# Prerequisites:
+# - Veracode API credentials stored in GitHub Secrets:
+#   - VERACODE_API_ID
+#   - VERACODE_API_KEY
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode Pipeline Scanner (downloaded during workflow execution)
+#
+# Documentation: https://docs.veracode.com/r/c_about_pipeline_scan
+# ============================================================================
+
+name: Veracode Pipeline Scan
+
+# ============================================================================
+# TRIGGER CONFIGURATION
+# ============================================================================
+# Customize when this workflow runs
+# ============================================================================
+
+on:
+  # Run on push to main/develop branches
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+  # Run on pull requests targeting main/develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  # Allow manual triggering from Actions tab
+  workflow_dispatch:
+    inputs:
+      fail_on_severity:
+        description: 'Fail on severity (e.g., "Very High, High")'
+        required: false
+        default: 'Very High, High'
+
+# ============================================================================
+# WORKFLOW CONFIGURATION
+# ============================================================================
+
+env:
+  # Application-specific settings
+  APP_NAME: 'my-application'
+  # Java version for running Pipeline Scanner
+  JAVA_VERSION: '11'
+
+jobs:
+  # ==========================================================================
+  # BUILD JOB
+  # ==========================================================================
+  # Build and package your application
+  # ==========================================================================
+
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+
+    steps:
+      # ====================================================================
+      # CHECKOUT BLOCK
+      # ====================================================================
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ====================================================================
+      # BUILD BLOCK - Customize for your application
+      # ====================================================================
+      # Replace this section with your actual build process
+      # Common examples below:
+      # ====================================================================
+
+      # Example: Java/Maven build
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'maven'
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      # Example: Java/Gradle build
+      # - name: Set up JDK
+      #   uses: actions/setup-java@v4
+      #   with:
+      #     distribution: 'temurin'
+      #     java-version: '11'
+      #     cache: 'gradle'
+      #
+      # - name: Build with Gradle
+      #   run: ./gradlew build -x test
+
+      # Example: Node.js build
+      # - name: Set up Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: '18'
+      #     cache: 'npm'
+      #
+      # - name: Install dependencies
+      #   run: npm ci
+      #
+      # - name: Build application
+      #   run: npm run build
+
+      # Example: .NET build
+      # - name: Setup .NET
+      #   uses: actions/setup-dotnet@v4
+      #   with:
+      #     dotnet-version: '7.0.x'
+      #
+      # - name: Build with .NET
+      #   run: dotnet publish -c Release -o ./publish
+
+      # ====================================================================
+      # ARTIFACT UPLOAD BLOCK
+      # ====================================================================
+      # Upload the built artifact for the security scan job
+      # ====================================================================
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: target/*.jar  # Adjust path to your build output
+          retention-days: 1
+
+  # ==========================================================================
+  # SECURITY SCAN JOB
+  # ==========================================================================
+  # Run Veracode Pipeline Scan on the built artifact
+  # ==========================================================================
+
+  security-scan:
+    name: Veracode Pipeline Scan
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      # ====================================================================
+      # DOWNLOAD ARTIFACT BLOCK
+      # ====================================================================
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+          path: ./scan-target
+
+      # ====================================================================
+      # SETUP BLOCK - Prepare Java runtime for Pipeline Scanner
+      # ====================================================================
+
+      - name: Set up JDK for Pipeline Scanner
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      # ====================================================================
+      # METHOD 1: Using Official Veracode GitHub Action (Recommended)
+      # ====================================================================
+      # This uses Veracode's official Pipeline Scan action
+      # ====================================================================
+
+      - name: Veracode Pipeline Scan
+        uses: veracode/Veracode-pipeline-scan-action@v1.0.12
+        with:
+          vid: ${{ secrets.VERACODE_API_ID }}
+          vkey: ${{ secrets.VERACODE_API_KEY }}
+          file: ./scan-target/*.jar
+          fail_build: true
+          # Options: Very High, High, Medium, Low, Very Low, Informational
+          severity_threshold: 'High'
+          # Optional: Project metadata
+          project_name: ${{ env.APP_NAME }}
+          project_url: ${{ github.server_url }}/${{ github.repository }}
+          project_ref: ${{ github.ref_name }}
+
+      # ====================================================================
+      # METHOD 2: Manual Pipeline Scan (Alternative)
+      # ====================================================================
+      # Download and run Pipeline Scanner manually for more control
+      # Uncomment this section if you prefer manual configuration
+      # ====================================================================
+
+      # - name: Download Veracode Pipeline Scanner
+      #   run: |
+      #     curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+      #     unzip -o pipeline-scan-LATEST.zip
+      #     ls -la pipeline-scan.jar
+      #
+      # - name: Run Pipeline Scan
+      #   run: |
+      #     java -jar pipeline-scan.jar \
+      #       --veracode_api_id "${{ secrets.VERACODE_API_ID }}" \
+      #       --veracode_api_key "${{ secrets.VERACODE_API_KEY }}" \
+      #       --file "./scan-target/*.jar" \
+      #       --project_name "${{ env.APP_NAME }}" \
+      #       --project_url "${{ github.server_url }}/${{ github.repository }}" \
+      #       --project_ref "${{ github.ref_name }}" \
+      #       --fail_on_severity="Very High, High" \
+      #       --json_output_file "results.json" \
+      #       --summary_output \
+      #       --summary_output_file "summary.json"
+
+      # ====================================================================
+      # RESULTS BLOCK - Upload scan results
+      # ====================================================================
+      # Save scan results as workflow artifacts for review and audit
+      # ====================================================================
+
+      - name: Upload Veracode results
+        if: always()  # Always upload results, even if scan fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-pipeline-scan-results
+          path: |
+            results.json
+            results.txt
+            filtered_results.json
+          retention-days: 30
+
+  # ==========================================================================
+  # BASELINE COMPARISON JOB (Optional)
+  # ==========================================================================
+  # Compare scan results against a baseline to only fail on NEW findings
+  # ==========================================================================
+
+  # security-scan-with-baseline:
+  #   name: Veracode Pipeline Scan with Baseline
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Download build artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: build-artifact
+  #         path: ./scan-target
+  #
+  #     - name: Download baseline file
+  #       run: |
+  #         # Download baseline from previous scan
+  #         # Option 1: From workflow artifacts
+  #         # gh run download [run-id] -n baseline
+  #         # Option 2: From repository
+  #         # curl -o baseline.json https://your-storage/baseline.json
+  #         # Option 3: From GitHub release
+  #         # gh release download baseline -p baseline.json
+  #         echo "Baseline file downloaded"
+  #
+  #     - name: Set up JDK
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: 'temurin'
+  #         java-version: '11'
+  #
+  #     - name: Download Pipeline Scanner
+  #       run: |
+  #         curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+  #         unzip -o pipeline-scan-LATEST.zip
+  #
+  #     - name: Run Pipeline Scan with Baseline
+  #       run: |
+  #         java -jar pipeline-scan.jar \
+  #           --veracode_api_id "${{ secrets.VERACODE_API_ID }}" \
+  #           --veracode_api_key "${{ secrets.VERACODE_API_KEY }}" \
+  #           --file "./scan-target/*.jar" \
+  #           --baseline_file "baseline.json" \
+  #           --fail_on_severity="Very High, High" \
+  #           --json_output_file "results.json"
+  #
+  #     - name: Save new baseline
+  #       if: success()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: baseline
+  #         path: results.json
+
+  # ==========================================================================
+  # SARIF UPLOAD JOB (Optional)
+  # ==========================================================================
+  # Convert results to SARIF format and upload to GitHub Security tab
+  # ==========================================================================
+
+  # upload-sarif:
+  #   name: Upload SARIF to GitHub Security
+  #   runs-on: ubuntu-latest
+  #   needs: security-scan
+  #   if: always()
+  #
+  #   permissions:
+  #     security-events: write
+  #
+  #   steps:
+  #     - name: Download scan results
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: veracode-pipeline-scan-results
+  #
+  #     - name: Convert to SARIF
+  #       uses: veracode/veracode-pipeline-scan-results-to-sarif@v2.0.0
+  #       with:
+  #         pipeline-results-json: results.json
+  #         output-results-sarif: veracode-results.sarif
+  #         finding-rule-level: '4:3:0'
+  #
+  #     - name: Upload SARIF to GitHub
+  #       uses: github/codeql-action/upload-sarif@v3
+  #       with:
+  #         sarif_file: veracode-results.sarif
+
+  # ==========================================================================
+  # PULL REQUEST COMMENT JOB (Optional)
+  # ==========================================================================
+  # Post scan results as a comment on the pull request
+  # ==========================================================================
+
+  # pr-comment:
+  #   name: Comment on Pull Request
+  #   runs-on: ubuntu-latest
+  #   needs: security-scan
+  #   if: github.event_name == 'pull_request'
+  #
+  #   permissions:
+  #     pull-requests: write
+  #
+  #   steps:
+  #     - name: Download scan results
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: veracode-pipeline-scan-results
+  #
+  #     - name: Parse results and comment
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const fs = require('fs');
+  #           const results = JSON.parse(fs.readFileSync('summary.json', 'utf8'));
+  #
+  #           const comment = `## Veracode Pipeline Scan Results
+  #
+  #           - **Total Flaws**: ${results.total_flaws}
+  #           - **Very High**: ${results.severity_counts.very_high || 0}
+  #           - **High**: ${results.severity_counts.high || 0}
+  #           - **Medium**: ${results.severity_counts.medium || 0}
+  #           - **Low**: ${results.severity_counts.low || 0}
+  #
+  #           View full results in the workflow artifacts.`;
+  #
+  #           github.rest.issues.createComment({
+  #             issue_number: context.issue.number,
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             body: comment
+  #           });
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# Severity Levels (for severity_threshold or --fail_on_severity):
+# - "Very High"
+# - "High"
+# - "Medium"
+# - "Low"
+# - "Very Low"
+# - "Informational"
+#
+# Common CWE IDs (for --fail_on_cwe):
+# - 79: Cross-Site Scripting (XSS)
+# - 89: SQL Injection
+# - 78: OS Command Injection
+# - 22: Path Traversal
+# - 352: Cross-Site Request Forgery (CSRF)
+# - 798: Use of Hard-coded Credentials
+#
+# Pipeline Scanner Parameters:
+# --timeout: Maximum scan time in minutes (default: 60)
+# --include: Additional files to include in scan
+# --exclude: Files to exclude from scan
+# --development_stage: Development stage (Development/Testing/Release)
+# --fail_on_cwe: Comma-separated list of CWE IDs to fail on
+# --baseline_file: JSON file from previous scan for comparison
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Authentication Errors:
+#    - Verify VERACODE_API_ID and VERACODE_API_KEY secrets are set
+#    - Navigate to: Settings → Secrets and variables → Actions
+#    - Ensure credentials haven't expired in Veracode Platform
+#
+# 2. File Not Found:
+#    - Verify artifact upload/download paths match
+#    - Check build job completed successfully
+#    - Ensure file glob pattern is correct (e.g., *.jar)
+#
+# 3. Action Version Errors:
+#    - Check for latest action version at:
+#      https://github.com/veracode/Veracode-pipeline-scan-action
+#    - Update version in uses: statement if needed
+#
+# 4. Scan Failures:
+#    - Download and review results.json artifact
+#    - Check if severity_threshold is appropriate
+#    - Verify uploaded file is a valid application package
+#
+# 5. Permission Errors (SARIF upload):
+#    - Ensure workflow has security-events: write permission
+#    - Check repository settings allow GitHub Actions to write
+#
+# For more help: https://docs.veracode.com/r/c_pipeline_scan_commands
+# ============================================================================

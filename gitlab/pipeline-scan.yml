@@ -1,0 +1,431 @@
+# ============================================================================
+# Veracode Pipeline Scan (SAST) - GitLab CI Template
+# ============================================================================
+# This template demonstrates how to integrate Veracode Pipeline Scan into
+# your GitLab CI/CD pipeline for fast Static Application Security Testing.
+#
+# Pipeline Scan provides results in minutes (vs hours for Policy Scan) and is
+# ideal for shift-left security in CI/CD workflows.
+#
+# Prerequisites:
+# - Veracode API credentials stored in GitLab CI/CD variables:
+#   - VERACODE_API_ID (masked, protected)
+#   - VERACODE_API_KEY (masked, protected)
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode Pipeline Scanner (downloaded during pipeline execution)
+#
+# Usage:
+# Copy the relevant stages/jobs into your .gitlab-ci.yml file
+#
+# Documentation: https://docs.veracode.com/r/c_about_pipeline_scan
+# ============================================================================
+
+# ============================================================================
+# PIPELINE CONFIGURATION
+# ============================================================================
+
+stages:
+  - build
+  - security-scan
+  - results
+
+# ============================================================================
+# VARIABLES
+# ============================================================================
+# Configure these variables in GitLab: Settings → CI/CD → Variables
+# Mark VERACODE_API_KEY as "masked" and both as "protected"
+# ============================================================================
+
+variables:
+  # Application-specific settings
+  APP_NAME: "my-application"
+
+  # Build output path (customize for your application)
+  BUILD_ARTIFACT: "target/*.jar"
+
+  # Java version for Pipeline Scanner
+  JAVA_VERSION: "11"
+
+  # Scan configuration
+  FAIL_ON_SEVERITY: "Very High, High"
+
+  # Results directory
+  RESULTS_DIR: "veracode-results"
+
+# ============================================================================
+# BUILD STAGE
+# ============================================================================
+# Build and package your application
+# ============================================================================
+
+build:application:
+  stage: build
+  image: maven:3.9-eclipse-temurin-11  # Customize for your build tool
+
+  # ====================================================================
+  # BUILD BLOCK - Customize for your application
+  # ====================================================================
+  # Replace with your actual build process
+  # Common examples below:
+  # ====================================================================
+
+  script:
+    - echo "Building $APP_NAME..."
+
+    # Example: Maven build
+    - mvn clean package -DskipTests
+
+    # Example: Gradle build
+    # - ./gradlew build -x test
+
+    # Example: npm build
+    # - npm ci
+    # - npm run build
+
+    # Example: .NET build
+    # - dotnet restore
+    # - dotnet publish -c Release -o ./publish
+
+    - echo "Build completed successfully"
+    - ls -la target/  # Verify build artifacts
+
+  # ====================================================================
+  # ARTIFACT CONFIGURATION
+  # ====================================================================
+  # Preserve build artifacts for the security scan stage
+  # ====================================================================
+
+  artifacts:
+    name: "build-artifacts-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - target/*.jar  # Customize path to your build output
+      # Additional paths as needed:
+      # - build/libs/*.jar
+      # - dist/**/*
+      # - publish/**/*
+    expire_in: 1 hour
+
+  # ====================================================================
+  # CACHE CONFIGURATION (Optional)
+  # ====================================================================
+  # Cache dependencies for faster builds
+  # ====================================================================
+
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .m2/repository  # Maven cache
+      # - .gradle/        # Gradle cache
+      # - node_modules/   # npm cache
+
+  # Run only on specific branches
+  only:
+    - main
+    - develop
+    - merge_requests
+    - tags
+
+# ============================================================================
+# SECURITY SCAN STAGE
+# ============================================================================
+# Run Veracode Pipeline Scan on the built artifact
+# ============================================================================
+
+veracode:pipeline-scan:
+  stage: security-scan
+  image: openjdk:11-jdk-slim  # Need Java runtime for Pipeline Scanner
+
+  needs:
+    - build:application
+
+  # ====================================================================
+  # SETUP BLOCK - Install required tools
+  # ====================================================================
+
+  before_script:
+    - echo "Setting up Veracode Pipeline Scanner..."
+    - apt-get update && apt-get install -y curl unzip
+
+    # Download Veracode Pipeline Scanner
+    - curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+    - unzip -o pipeline-scan-LATEST.zip
+    - ls -la pipeline-scan.jar
+
+    # Create results directory
+    - mkdir -p $RESULTS_DIR
+
+  # ====================================================================
+  # SCAN BLOCK - Execute Veracode Pipeline Scan
+  # ====================================================================
+  # This runs the actual security scan on your application
+  #
+  # Key Parameters:
+  # - veracode_api_id: Your Veracode API ID (from CI/CD variables)
+  # - veracode_api_key: Your Veracode API Key (from CI/CD variables)
+  # - file: Path to the file to scan (JAR, WAR, ZIP, etc.)
+  # - fail_on_severity: Fail build on specified severities
+  # - fail_on_cwe: Fail build on specific CWE IDs
+  # - baseline_file: Compare against previous scan results
+  # ====================================================================
+
+  script:
+    - echo "Starting Veracode Pipeline Scan for $APP_NAME..."
+    - echo "Scanning artifacts in $BUILD_ARTIFACT"
+
+    # Run the Pipeline Scanner
+    - |
+      java -jar pipeline-scan.jar \
+        --veracode_api_id "$VERACODE_API_ID" \
+        --veracode_api_key "$VERACODE_API_KEY" \
+        --file "$BUILD_ARTIFACT" \
+        --project_name "$APP_NAME" \
+        --project_url "$CI_PROJECT_URL" \
+        --project_ref "$CI_COMMIT_REF_NAME" \
+        --fail_on_severity="$FAIL_ON_SEVERITY" \
+        --json_output_file "$RESULTS_DIR/results.json" \
+        --summary_output \
+        --summary_output_file "$RESULTS_DIR/summary.json" \
+        || SCAN_FAILED=$?
+
+    # Display scan summary
+    - echo "Scan completed. Results:"
+    - cat $RESULTS_DIR/summary.json || true
+
+    # Exit with scan status
+    - exit ${SCAN_FAILED:-0}
+
+  # ====================================================================
+  # RESULTS BLOCK - Preserve scan results
+  # ====================================================================
+  # Save scan results as job artifacts for review and audit
+  # ====================================================================
+
+  artifacts:
+    name: "veracode-pipeline-scan-$CI_COMMIT_SHORT_SHA"
+    when: always  # Always save results, even if scan fails
+    paths:
+      - $RESULTS_DIR/
+    reports:
+      # GitLab can parse SAST reports in specific format
+      # Add conversion to GitLab SAST format if needed
+      sast: $RESULTS_DIR/gl-sast-report.json
+    expire_in: 30 days
+
+  # Allow manual retry if scan fails
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+  # Run only on specific branches
+  only:
+    - main
+    - develop
+    - merge_requests
+    - tags
+
+# ============================================================================
+# ALTERNATIVE: Pipeline Scan with Baseline Comparison
+# ============================================================================
+# Compare current scan against baseline to only fail on NEW findings
+# Uncomment and customize as needed
+# ============================================================================
+
+# veracode:pipeline-scan-baseline:
+#   stage: security-scan
+#   image: openjdk:11-jdk-slim
+#
+#   needs:
+#     - build:application
+#
+#   before_script:
+#     - apt-get update && apt-get install -y curl unzip
+#     - curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+#     - unzip -o pipeline-scan-LATEST.zip
+#     - mkdir -p $RESULTS_DIR
+#
+#     # Download baseline file
+#     # Option 1: From project artifacts
+#     # - curl -o baseline.json "$CI_PROJECT_URL/-/jobs/artifacts/main/raw/baseline.json?job=veracode:pipeline-scan"
+#     # Option 2: From external storage
+#     # - curl -o baseline.json https://your-storage/baseline.json
+#
+#   script:
+#     - |
+#       java -jar pipeline-scan.jar \
+#         --veracode_api_id "$VERACODE_API_ID" \
+#         --veracode_api_key "$VERACODE_API_KEY" \
+#         --file "$BUILD_ARTIFACT" \
+#         --baseline_file "baseline.json" \
+#         --fail_on_severity="$FAIL_ON_SEVERITY" \
+#         --json_output_file "$RESULTS_DIR/results.json"
+#
+#   artifacts:
+#     name: "veracode-baseline-scan-$CI_COMMIT_SHORT_SHA"
+#     when: always
+#     paths:
+#       - $RESULTS_DIR/
+#     expire_in: 30 days
+#
+#   only:
+#     - main
+
+# ============================================================================
+# OPTIONAL: Convert Results to GitLab SAST Format
+# ============================================================================
+# Convert Veracode results to GitLab's SAST report format for native integration
+# ============================================================================
+
+# veracode:convert-to-gitlab-format:
+#   stage: results
+#   image: python:3.11-slim
+#
+#   needs:
+#     - veracode:pipeline-scan
+#
+#   before_script:
+#     - pip install veracode-to-gitlab-sast
+#
+#   script:
+#     - echo "Converting Veracode results to GitLab SAST format..."
+#     - veracode-to-gitlab-sast $RESULTS_DIR/results.json > $RESULTS_DIR/gl-sast-report.json
+#
+#   artifacts:
+#     reports:
+#       sast: $RESULTS_DIR/gl-sast-report.json
+#
+#   only:
+#     - main
+#     - merge_requests
+
+# ============================================================================
+# OPTIONAL: Merge Request Comment
+# ============================================================================
+# Post scan summary as a comment on merge requests
+# ============================================================================
+
+# veracode:mr-comment:
+#   stage: results
+#   image: alpine:latest
+#
+#   needs:
+#     - veracode:pipeline-scan
+#
+#   before_script:
+#     - apk add --no-cache curl jq
+#
+#   script:
+#     - |
+#       # Parse summary
+#       TOTAL_FLAWS=$(jq '.total_flaws' $RESULTS_DIR/summary.json)
+#       VERY_HIGH=$(jq '.severity_counts.very_high // 0' $RESULTS_DIR/summary.json)
+#       HIGH=$(jq '.severity_counts.high // 0' $RESULTS_DIR/summary.json)
+#
+#       # Create comment body
+#       COMMENT="## Veracode Pipeline Scan Results\n\n"
+#       COMMENT="${COMMENT}- **Total Flaws**: ${TOTAL_FLAWS}\n"
+#       COMMENT="${COMMENT}- **Very High**: ${VERY_HIGH}\n"
+#       COMMENT="${COMMENT}- **High**: ${HIGH}\n"
+#
+#       # Post to merge request
+#       curl --request POST \
+#         --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+#         --data "body=$COMMENT" \
+#         "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes"
+#
+#   only:
+#     - merge_requests
+#
+#   # Requires GITLAB_TOKEN variable with api scope
+
+# ============================================================================
+# OPTIONAL: Scheduled Security Scans
+# ============================================================================
+# Run comprehensive scans on a schedule (e.g., nightly)
+# ============================================================================
+
+# veracode:scheduled-scan:
+#   stage: security-scan
+#   image: openjdk:11-jdk-slim
+#
+#   extends: veracode:pipeline-scan
+#
+#   variables:
+#     FAIL_ON_SEVERITY: "Medium, High, Very High"  # Stricter for scheduled scans
+#
+#   only:
+#     - schedules
+#
+#   # Configure schedule in GitLab: CI/CD → Schedules → New schedule
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# Severity Levels (for --fail_on_severity):
+# - "Very High"
+# - "High"
+# - "Medium"
+# - "Low"
+# - "Very Low"
+# - "Informational"
+#
+# Common CWE IDs (for --fail_on_cwe):
+# - 79: Cross-Site Scripting (XSS)
+# - 89: SQL Injection
+# - 78: OS Command Injection
+# - 22: Path Traversal
+# - 352: Cross-Site Request Forgery (CSRF)
+# - 798: Use of Hard-coded Credentials
+#
+# Usage Examples:
+# --fail_on_severity="Very High, High"
+# --fail_on_cwe="79,89,78"
+#
+# Additional Options:
+# --timeout: Maximum scan time in minutes (default: 60)
+# --include: Additional files to include in scan
+# --exclude: Files to exclude from scan
+# --development_stage: Development stage (Development/Testing/Release)
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Authentication Errors:
+#    - Verify VERACODE_API_ID and VERACODE_API_KEY are set in CI/CD variables
+#    - Navigate to: Settings → CI/CD → Variables
+#    - Ensure both are marked as "masked" and "protected"
+#    - Check API credentials haven't expired in Veracode Platform
+#
+# 2. File Not Found:
+#    - Verify BUILD_ARTIFACT path matches your build output
+#    - Check build job artifacts configuration
+#    - Ensure artifacts are not expired
+#    - Verify file permissions
+#
+# 3. Job Failures:
+#    - Review job logs for detailed error messages
+#    - Check if --fail_on_severity threshold is appropriate
+#    - Verify uploaded file is a valid application package
+#    - Ensure sufficient runner resources (memory, CPU)
+#
+# 4. Artifact Issues:
+#    - Verify artifacts paths are correct
+#    - Check expire_in duration
+#    - Ensure dependencies between jobs are correct
+#    - Review artifacts size limits
+#
+# 5. Permission Errors:
+#    - Verify CI/CD variables are accessible (not limited to protected branches)
+#    - Check runner has network access to Veracode
+#    - Ensure container has required permissions
+#
+# For more help: https://docs.veracode.com/r/c_pipeline_scan_commands
+# GitLab CI/CD docs: https://docs.gitlab.com/ee/ci/
+# ============================================================================

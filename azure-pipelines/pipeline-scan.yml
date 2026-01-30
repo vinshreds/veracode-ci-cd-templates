@@ -1,0 +1,309 @@
+# ============================================================================
+# Veracode Pipeline Scan (SAST) - Azure Pipelines Template
+# ============================================================================
+# This template demonstrates how to integrate Veracode Pipeline Scan into
+# your Azure DevOps pipeline for fast Static Application Security Testing.
+#
+# Pipeline Scan provides results in minutes (vs hours for Policy Scan) and is
+# ideal for shift-left security in CI/CD workflows.
+#
+# Prerequisites:
+# - Veracode API credentials stored in Azure Pipeline variables or variable group
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode Pipeline Scanner (downloaded during pipeline execution)
+#
+# Documentation: https://docs.veracode.com/r/c_about_pipeline_scan
+# ============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+  paths:
+    exclude:
+      - '*.md'
+      - 'docs/**'
+
+# Optionally run on pull requests
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# ============================================================================
+# VARIABLES CONFIGURATION
+# ============================================================================
+# Store VERACODE_API_ID and VERACODE_API_KEY in Azure Pipeline variables
+# or link a variable group containing these credentials
+# ============================================================================
+
+variables:
+  # Option 1: Use a variable group (recommended for credential management)
+  # - group: 'veracode-credentials'
+
+  # Option 2: Reference pipeline variables directly
+  VERACODE_API_ID: $(veracode-api-id)
+  VERACODE_API_KEY: $(veracode-api-key)
+
+  # Application-specific settings
+  APP_NAME: 'my-application'
+  SCAN_RESULTS_DIR: '$(Build.ArtifactStagingDirectory)/veracode-results'
+
+stages:
+  - stage: Build
+    displayName: 'Build Application'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build and Package'
+        steps:
+          # ====================================================================
+          # BUILD BLOCK - Customize for your application
+          # ====================================================================
+          # Replace this section with your actual build process
+          # Common examples below:
+          # ====================================================================
+
+          # Example: Maven build
+          - task: Maven@3
+            displayName: 'Build with Maven'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean package'
+              options: '-DskipTests'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.11'
+
+          # Example: Gradle build
+          # - task: Gradle@2
+          #   displayName: 'Build with Gradle'
+          #   inputs:
+          #     gradleWrapperFile: 'gradlew'
+          #     tasks: 'build'
+          #     options: '-x test'
+
+          # Example: .NET build
+          # - task: DotNetCoreCLI@2
+          #   displayName: 'Build with .NET'
+          #   inputs:
+          #     command: 'publish'
+          #     publishWebProjects: true
+          #     arguments: '--configuration Release --output $(Build.ArtifactStagingDirectory)'
+
+          # ====================================================================
+          # PUBLISH BUILD ARTIFACT
+          # ====================================================================
+          # Publish the compiled artifact for the security scan stage
+          # ====================================================================
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Build Artifact'
+            inputs:
+              targetPath: 'target'  # Adjust path to your build output
+              artifact: 'build-artifact'
+              publishLocation: 'pipeline'
+
+  - stage: SecurityScan
+    displayName: 'Veracode Pipeline Scan'
+    dependsOn: Build
+    jobs:
+      - job: PipelineScanJob
+        displayName: 'Run Veracode Pipeline Scan'
+        steps:
+          # ====================================================================
+          # DOWNLOAD BUILD ARTIFACT
+          # ====================================================================
+
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download Build Artifact'
+            inputs:
+              artifact: 'build-artifact'
+              path: '$(System.DefaultWorkingDirectory)/build-output'
+
+          # ====================================================================
+          # SETUP BLOCK - Download Veracode Pipeline Scanner
+          # ====================================================================
+          # The Pipeline Scanner is a Java-based tool that runs locally
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Download Veracode Pipeline Scanner'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Downloading Veracode Pipeline Scanner..."
+                curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+                unzip -o pipeline-scan-LATEST.zip
+                echo "Pipeline Scanner downloaded successfully"
+                ls -la pipeline-scan.jar
+
+          # ====================================================================
+          # SCAN BLOCK - Execute Veracode Pipeline Scan
+          # ====================================================================
+          # This runs the actual security scan on your application
+          #
+          # Key Parameters:
+          # - veracode_api_id: Your Veracode API ID (from variables)
+          # - veracode_api_key: Your Veracode API Key (from variables)
+          # - file: Path to the file to scan (JAR, WAR, ZIP, etc.)
+          # - fail_on_severity: Fail build on specified severities
+          # - fail_on_cwe: Fail build on specific CWE IDs
+          # - baseline_file: Compare against previous scan results
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Run Pipeline Scan'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Starting Veracode Pipeline Scan for $(APP_NAME)..."
+
+                # Create results directory
+                mkdir -p $(SCAN_RESULTS_DIR)
+
+                # Run the Pipeline Scanner
+                java -jar pipeline-scan.jar \
+                  --veracode_api_id "$(VERACODE_API_ID)" \
+                  --veracode_api_key "$(VERACODE_API_KEY)" \
+                  --file "$(System.DefaultWorkingDirectory)/build-output/*.jar" \
+                  --project_name "$(APP_NAME)" \
+                  --project_url "$(Build.Repository.Uri)" \
+                  --project_ref "$(Build.SourceBranchName)" \
+                  --fail_on_severity="Very High, High" \
+                  --json_output_file "$(SCAN_RESULTS_DIR)/results.json" \
+                  --summary_output \
+                  --summary_output_file "$(SCAN_RESULTS_DIR)/summary.json"
+
+                echo "Scan completed. Results saved to $(SCAN_RESULTS_DIR)"
+            env:
+              VERACODE_API_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY: $(VERACODE_API_KEY)
+            # Remove 'continueOnError: true' to fail the build on scan failures
+            continueOnError: false
+
+          # ====================================================================
+          # OPTIONAL: Baseline Comparison Block
+          # ====================================================================
+          # Compare current scan results against a baseline to only fail on
+          # NEW vulnerabilities introduced in this build
+          # ====================================================================
+
+          # - task: Bash@3
+          #   displayName: 'Run Pipeline Scan with Baseline'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       java -jar pipeline-scan.jar \
+          #         --veracode_api_id "$(VERACODE_API_ID)" \
+          #         --veracode_api_key "$(VERACODE_API_KEY)" \
+          #         --file "$(System.DefaultWorkingDirectory)/build-output/*.jar" \
+          #         --baseline_file "baseline.json" \
+          #         --fail_on_severity="Very High, High" \
+          #         --json_output_file "$(SCAN_RESULTS_DIR)/results.json"
+
+          # ====================================================================
+          # RESULTS BLOCK - Publish Scan Results
+          # ====================================================================
+          # Save scan results as build artifacts for review and audit
+          # ====================================================================
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Scan Results'
+            condition: always()  # Always publish results, even if scan fails
+            inputs:
+              targetPath: '$(SCAN_RESULTS_DIR)'
+              artifact: 'veracode-pipeline-scan-results'
+              publishLocation: 'pipeline'
+
+          # ====================================================================
+          # OPTIONAL: Convert Results to SARIF for Azure DevOps Integration
+          # ====================================================================
+          # SARIF format enables native integration with Azure DevOps
+          # security dashboard
+          # ====================================================================
+
+          # - task: Bash@3
+          #   displayName: 'Convert to SARIF Format'
+          #   condition: always()
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       # Install veracode-pipeline-scan-results-to-sarif converter
+          #       npm install -g @veracode/pipeline-scan-results-to-sarif
+          #
+          #       # Convert JSON results to SARIF
+          #       veracode-pipeline-scan-results-to-sarif \
+          #         --input $(SCAN_RESULTS_DIR)/results.json \
+          #         --output $(SCAN_RESULTS_DIR)/results.sarif
+
+          # - task: PublishBuildArtifacts@1
+          #   displayName: 'Publish SARIF Results'
+          #   condition: always()
+          #   inputs:
+          #     PathtoPublish: '$(SCAN_RESULTS_DIR)/results.sarif'
+          #     ArtifactName: 'CodeAnalysisLogs'
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# Severity Levels (for --fail_on_severity):
+# - "Very High"
+# - "High"
+# - "Medium"
+# - "Low"
+# - "Very Low"
+# - "Informational"
+#
+# Common CWE IDs (for --fail_on_cwe):
+# - 79: Cross-Site Scripting (XSS)
+# - 89: SQL Injection
+# - 78: OS Command Injection
+# - 22: Path Traversal
+# - 352: Cross-Site Request Forgery (CSRF)
+# - 798: Use of Hard-coded Credentials
+#
+# Usage Examples:
+# --fail_on_severity="Very High, High"
+# --fail_on_cwe="79,89,78"
+#
+# Additional Options:
+# --timeout: Maximum scan time in minutes (default: 60)
+# --include: Additional files to include in scan
+# --exclude: Files to exclude from scan
+# --development_stage: Development stage (Development/Testing/Release)
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Authentication Errors:
+#    - Verify VERACODE_API_ID and VERACODE_API_KEY are set correctly
+#    - Ensure credentials are marked as "secret" in pipeline variables
+#    - Check API credentials haven't expired in Veracode Platform
+#
+# 2. File Not Found:
+#    - Verify build artifact path is correct
+#    - Ensure build completed successfully before scan
+#    - Check file permissions
+#
+# 3. Scan Failures:
+#    - Review results.json for detailed findings
+#    - Check if --fail_on_severity threshold is too strict
+#    - Verify uploaded file is a valid application package
+#
+# 4. Performance Issues:
+#    - Use --timeout to extend scan time for large applications
+#    - Consider scanning only changed files for faster feedback
+#
+# For more help: https://docs.veracode.com/r/c_pipeline_scan_commands
+# ============================================================================
