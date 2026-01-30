@@ -1,0 +1,483 @@
+# ============================================================================
+# Veracode SCA Scan (Software Composition Analysis) - Bitbucket Pipelines
+# ============================================================================
+# This template demonstrates how to integrate Veracode SCA scanning into your
+# Bitbucket Pipelines to identify vulnerabilities in third-party dependencies
+# and open-source components.
+#
+# SCA Scan analyzes:
+# - Third-party libraries and dependencies
+# - Known vulnerabilities (CVEs)
+# - License compliance and risks
+# - Outdated components
+# - Transitive dependencies
+#
+# SCA runs quickly (minutes) and can run in parallel with other scans.
+#
+# Prerequisites:
+# - Veracode SCA Agent credentials in Bitbucket variables (SRCCLR_API_TOKEN)
+# - Dependency manifest files (pom.xml, package.json, requirements.txt, etc.)
+# - Source code with dependency declarations
+#
+# Usage: Copy into your bitbucket-pipelines.yml or merge with existing
+#
+# Documentation: https://docs.veracode.com/r/About_Software_Composition_Analysis
+# ============================================================================
+
+# ============================================================================
+# GLOBAL CONFIGURATION
+# ============================================================================
+
+image: alpine:latest
+
+# ============================================================================
+# DEFINITIONS
+# ============================================================================
+
+definitions:
+  caches:
+    maven: ~/.m2/repository
+    npm: node_modules
+    pip: ~/.cache/pip
+
+  # ========================================================================
+  # REUSABLE STEPS
+  # ========================================================================
+
+  steps:
+    - step: &sca-scan
+        name: Veracode SCA Scan
+        script:
+          # ============================================================
+          # SETUP BLOCK
+          # ============================================================
+
+          - echo "Setting up Veracode SCA Agent..."
+          - apk add --no-cache curl bash
+
+          # Download SCA Agent
+          - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          - chmod +x ci.sh
+
+          # ============================================================
+          # SCAN BLOCK
+          # ============================================================
+
+          - echo "Starting SCA scan for ${BITBUCKET_REPO_SLUG}..."
+
+          # Run SCA scan
+          - |
+            ./ci.sh scan \
+              --app "${BITBUCKET_REPO_SLUG}" \
+              --allow-dirty \
+              --json > sca-results.json
+
+          - echo "✓ SCA scan completed"
+
+        artifacts:
+          - sca-results.json
+
+    - step: &sca-maven
+        name: SCA Scan - Java/Maven
+        image: maven:3.9-eclipse-temurin-11
+        script:
+          - echo "Resolving Maven dependencies..."
+          - mvn dependency:resolve
+
+          - echo "Setting up SCA Agent..."
+          - apt-get update && apt-get install -y curl
+          - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          - chmod +x ci.sh
+
+          - echo "Running SCA scan..."
+          - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}" --maven
+
+        caches:
+          - maven
+
+    - step: &sca-npm
+        name: SCA Scan - Node.js/npm
+        image: node:18-alpine
+        script:
+          - echo "Installing npm dependencies..."
+          - npm ci
+
+          - echo "Setting up SCA Agent..."
+          - apk add --no-cache curl bash
+          - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          - chmod +x ci.sh
+
+          - echo "Running SCA scan..."
+          - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}" --npm
+
+        caches:
+          - npm
+
+    - step: &sca-python
+        name: SCA Scan - Python
+        image: python:3.11-alpine
+        script:
+          - echo "Installing Python dependencies..."
+          - pip install -r requirements.txt
+
+          - echo "Setting up SCA Agent..."
+          - apk add --no-cache curl bash
+          - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          - chmod +x ci.sh
+
+          - echo "Running SCA scan..."
+          - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}" --python
+
+        caches:
+          - pip
+
+    - step: &sca-with-threshold
+        name: SCA Scan with Vulnerability Threshold
+        script:
+          - echo "Setting up SCA Agent..."
+          - apk add --no-cache curl bash
+          - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          - chmod +x ci.sh
+
+          - echo "Running SCA with threshold..."
+
+          # Fail on CVSS >= 7.0 or high severity
+          - |
+            ./ci.sh scan \
+              --app "${BITBUCKET_REPO_SLUG}" \
+              --threshold-cvss 7.0 \
+              --threshold-cve-severity high \
+              --json > sca-results.json
+
+        artifacts:
+          - sca-results.json
+
+    - step: &generate-sbom
+        name: Generate SBOM
+        script:
+          - apk add --no-cache curl bash
+          - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+          - chmod +x ci.sh
+
+          - echo "Generating Software Bill of Materials..."
+
+          # Run scan
+          - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}" --json > sca-results.json
+
+          # Generate SBOM
+          - |
+            ./ci.sh sbom \
+              --format cyclonedx \
+              --output sbom.json
+
+          - echo "✓ SBOM generated"
+
+        artifacts:
+          - sbom.json
+          - sca-results.json
+
+# ============================================================================
+# PIPELINES
+# ============================================================================
+
+pipelines:
+  # ========================================================================
+  # DEFAULT PIPELINE
+  # ========================================================================
+
+  default:
+    - step: *sca-scan
+
+  # ========================================================================
+  # BRANCH-SPECIFIC PIPELINES
+  # ========================================================================
+
+  branches:
+    main:
+      - step: *sca-with-threshold
+
+    develop:
+      - step: *sca-scan
+
+    feature/*:
+      - step: *sca-scan
+
+  # ========================================================================
+  # PULL REQUEST PIPELINE
+  # ========================================================================
+
+  pull-requests:
+    '**':
+      - step: *sca-scan
+
+  # ========================================================================
+  # TAG PIPELINE - Generate SBOM for Releases
+  # ========================================================================
+
+  tags:
+    'v*':
+      - step: *generate-sbom
+
+  # ========================================================================
+  # CUSTOM PIPELINES
+  # ========================================================================
+
+  custom:
+    sca-scan-only:
+      - step: *sca-scan
+
+    sca-maven:
+      - step: *sca-maven
+
+    sca-npm:
+      - step: *sca-npm
+
+    sca-python:
+      - step: *sca-python
+
+    sca-with-sbom:
+      - step: *generate-sbom
+
+    # ======================================================================
+    # Parallel Build and SCA
+    # ======================================================================
+
+    build-and-sca:
+      - parallel:
+        - step:
+            name: Build Application
+            image: maven:3.9-eclipse-temurin-11
+            script:
+              - mvn clean package -DskipTests
+            artifacts:
+              - target/**
+        - step: *sca-scan
+
+# ============================================================================
+# ADVANCED EXAMPLES
+# ============================================================================
+
+# ============================================================================
+# EXAMPLE: Monorepo with Multiple Projects
+# ============================================================================
+
+# pipelines:
+#   default:
+#     - parallel:
+#       - step:
+#           name: SCA - Frontend
+#           script:
+#             - cd frontend
+#             - apk add --no-cache curl bash nodejs npm
+#             - npm ci
+#             - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#             - chmod +x ci.sh
+#             - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}-frontend" --npm
+#
+#       - step:
+#           name: SCA - Backend
+#           image: maven:3.9-eclipse-temurin-11
+#           script:
+#             - cd backend
+#             - mvn dependency:resolve
+#             - apt-get update && apt-get install -y curl
+#             - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#             - chmod +x ci.sh
+#             - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}-backend" --maven
+
+# ============================================================================
+# EXAMPLE: SCA with License Compliance Check
+# ============================================================================
+
+# - step:
+#     name: License Compliance Check
+#     script:
+#       - apk add --no-cache curl bash jq
+#       - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#       - chmod +x ci.sh
+#
+#       # Run SCA scan
+#       - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}" --json > sca-results.json
+#
+#       # Check for prohibited licenses
+#       - |
+#         PROHIBITED="GPL AGPL LGPL"
+#         for license in $PROHIBITED; do
+#           if grep -qi "$license" sca-results.json; then
+#             echo "❌ Prohibited license found: $license"
+#             exit 1
+#           fi
+#         done
+#       - echo "✓ All licenses compliant"
+
+# ============================================================================
+# EXAMPLE: Scheduled Weekly Dependency Audit
+# ============================================================================
+
+# pipelines:
+#   custom:
+#     weekly-audit:
+#       - step:
+#           name: Weekly Dependency Audit
+#           script:
+#             - apk add --no-cache curl bash
+#             - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#             - chmod +x ci.sh
+#             - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}" --json > audit-report.json
+#           artifacts:
+#             - audit-report.json
+#
+# # Configure schedule in Bitbucket: Repository settings → Pipelines → Schedules
+
+# ============================================================================
+# EXAMPLE: Multi-Language Detection
+# ============================================================================
+
+# - step:
+#     name: Auto-Detect and Scan
+#     script:
+#       - apk add --no-cache curl bash
+#       - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#       - chmod +x ci.sh
+#
+#       # Auto-detect package managers and scan
+#       - ./ci.sh scan --app "${BITBUCKET_REPO_SLUG}" --recursive
+
+# ============================================================================
+# EXAMPLE: SCA with Conditional Deployment
+# ============================================================================
+
+# pipelines:
+#   branches:
+#     main:
+#       - step: *sca-with-threshold
+#       - step:
+#           name: Deploy to Production
+#           deployment: production
+#           trigger: manual  # Only deploy if SCA passed
+#           script:
+#             - echo "SCA scan passed - safe to deploy"
+#             - echo "Deploy your application here"
+
+# ============================================================================
+# EXAMPLE: Store SBOM in Bitbucket Downloads
+# ============================================================================
+
+# - step:
+#     name: Upload SBOM to Downloads
+#     script:
+#       - apk add --no-cache curl bash jq
+#       - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#       - chmod +x ci.sh
+#
+#       # Generate SBOM
+#       - ./ci.sh sbom --format cyclonedx --output sbom.json
+#
+#       # Upload to Bitbucket Downloads
+#       - |
+#         curl -X POST \
+#           -u "${BITBUCKET_USER}:${BITBUCKET_APP_PASSWORD}" \
+#           -F files=@sbom.json \
+#           "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_REPO_OWNER}/${BITBUCKET_REPO_SLUG}/downloads"
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# SCA Agent Parameters:
+# --app: Application name (default: repository slug)
+# --allow-dirty: Allow uncommitted changes
+# --maven: Scan Maven projects
+# --gradle: Scan Gradle projects
+# --npm: Scan npm projects
+# --yarn: Scan Yarn projects
+# --pip: Scan Python pip projects
+# --go: Scan Go modules
+# --ruby: Scan Ruby gems
+# --nuget: Scan .NET NuGet
+# --threshold-cvss: Min CVSS to fail (0.0-10.0)
+# --threshold-cve-severity: Min severity (low, medium, high, critical)
+# --json: Output JSON results
+# --recursive: Scan subdirectories
+# --no-upload: Don't upload to platform
+# --quick: Quick scan mode
+#
+# Environment Variables:
+# - SRCCLR_API_TOKEN: SCA Agent API token (required)
+# - SRCCLR_SCM_URI: Repository URL
+# - SRCCLR_SCM_REF: Branch/tag
+# - SRCCLR_SCM_REV: Commit SHA
+#
+# Bitbucket Variables:
+# - BITBUCKET_REPO_SLUG: Repository name
+# - BITBUCKET_BRANCH: Current branch
+# - BITBUCKET_COMMIT: Commit SHA
+# - BITBUCKET_TAG: Tag name
+# - BITBUCKET_BUILD_NUMBER: Build number
+#
+# Severity Levels:
+# - Critical: CVSS 9.0-10.0
+# - High: CVSS 7.0-8.9
+# - Medium: CVSS 4.0-6.9
+# - Low: CVSS 0.1-3.9
+#
+# Supported Package Managers:
+# - Maven, Gradle, npm, Yarn, pnpm
+# - pip, Pipenv, Poetry
+# - Go Modules, Ruby Bundler
+# - NuGet, Composer, CocoaPods
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Token Authentication:
+#    - Get token from Veracode Platform → Agent-Based Scan
+#    - Store as SRCCLR_API_TOKEN in repository variables
+#    - Mark as "Secured"
+#    - Verify token hasn't expired
+#
+# 2. No Dependencies Found:
+#    - Ensure manifest files exist
+#    - Check correct directory
+#    - Use specific scan flag (--maven, --npm, etc.)
+#    - Run dependency install before scan
+#
+# 3. Build Failures:
+#    - Adjust CVSS or severity thresholds
+#    - Review vulnerabilities in Veracode Platform
+#    - Use different scan modes
+#
+# 4. Image Issues:
+#    - Some images need additional packages
+#    - Install curl and bash if missing
+#    - Use language-specific images when possible
+#
+# 5. Private Dependencies:
+#    - Configure package manager auth
+#    - Set up .npmrc, settings.xml, etc.
+#    - Store credentials in Bitbucket variables
+#
+# 6. Artifact Size:
+#    - Bitbucket limits artifact storage
+#    - Use shorter retention periods
+#    - Store large files externally
+#
+# 7. Pipeline Timeout:
+#    - SCA is typically fast
+#    - Check network connectivity
+#    - Review scan logs for delays
+#
+# 8. Parallel Step Limits:
+#    - Free plans have parallel step limits
+#    - Combine steps if needed
+#    - Upgrade plan for more parallelism
+#
+# For more help:
+# - Veracode: https://docs.veracode.com/r/c_sc_what_is
+# - Bitbucket: https://support.atlassian.com/bitbucket-cloud/docs/
+# ============================================================================

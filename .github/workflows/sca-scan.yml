@@ -1,0 +1,530 @@
+# ============================================================================
+# Veracode SCA Scan (Software Composition Analysis) - GitHub Actions Workflow
+# ============================================================================
+# This workflow demonstrates how to integrate Veracode SCA scanning into your
+# GitHub Actions pipeline to identify vulnerabilities in third-party dependencies
+# and open-source components.
+#
+# SCA Scan analyzes:
+# - Third-party libraries and dependencies
+# - Known vulnerabilities (CVEs)
+# - License compliance and risks
+# - Outdated components
+# - Transitive dependencies
+#
+# SCA runs quickly (minutes) and can run in parallel with other scans.
+#
+# Prerequisites:
+# - Veracode SCA Agent credentials stored in GitHub Secrets (SRCCLR_API_TOKEN)
+# - Dependency manifest files (pom.xml, package.json, requirements.txt, etc.)
+# - Source code with dependency declarations
+#
+# Documentation: https://docs.veracode.com/r/About_Software_Composition_Analysis
+# ============================================================================
+
+name: Veracode SCA Scan
+
+# ============================================================================
+# TRIGGER CONFIGURATION
+# ============================================================================
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  # Scheduled scan (weekly dependency check)
+  schedule:
+    - cron: '0 2 * * 1'  # Monday at 2 AM
+
+  workflow_dispatch:
+    inputs:
+      severity_threshold:
+        description: 'Minimum severity to fail build'
+        required: false
+        default: 'high'
+        type: choice
+        options:
+          - critical
+          - high
+          - medium
+          - low
+
+# ============================================================================
+# ENVIRONMENT VARIABLES
+# ============================================================================
+
+env:
+  APP_NAME: 'my-application'
+
+jobs:
+  # ==========================================================================
+  # SCA SCAN JOB
+  # ==========================================================================
+
+  sca-scan:
+    name: Veracode SCA Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      # ====================================================================
+      # CHECKOUT BLOCK
+      # ====================================================================
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ====================================================================
+      # METHOD 1: Using Official Veracode SCA GitHub Action (Recommended)
+      # ====================================================================
+
+      - name: Run Veracode SCA Scan
+        uses: veracode/veracode-sca@v2.1.9
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          create-issues: true  # Create GitHub issues for vulnerabilities
+          # Optional: Fail on specific severity
+          # fail-on-severity: high
+
+        env:
+          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+      # ====================================================================
+      # METHOD 2: Using SCA Agent Directly (Alternative)
+      # ====================================================================
+      # Uncomment for more control over the scan process
+      # ====================================================================
+
+      # - name: Download Veracode SCA Agent
+      #   run: |
+      #     curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+      #     chmod +x ci.sh
+      #
+      # - name: Run SCA Scan
+      #   run: |
+      #     echo "Starting Veracode SCA scan..."
+      #     ./ci.sh scan \
+      #       --app ${{ env.APP_NAME }} \
+      #       --allow-dirty \
+      #       --json > sca-results.json
+      #
+      #     echo "SCA scan completed"
+      #   env:
+      #     SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+      #
+      # - name: Upload SCA Results
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: sca-results
+      #     path: sca-results.json
+      #     retention-days: 30
+
+  # ==========================================================================
+  # LANGUAGE-SPECIFIC SCA SCANS
+  # ==========================================================================
+
+  # ==========================================================================
+  # Java/Maven Project
+  # ==========================================================================
+
+  # sca-scan-maven:
+  #   name: SCA Scan - Java/Maven
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Set up JDK
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: 'temurin'
+  #         java-version: '11'
+  #
+  #     - name: Download Dependencies
+  #       run: mvn dependency:resolve
+  #
+  #     - name: Run SCA Scan
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #         ./ci.sh scan --app ${{ env.APP_NAME }} --maven
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+  # ==========================================================================
+  # Node.js/npm Project
+  # ==========================================================================
+
+  # sca-scan-npm:
+  #   name: SCA Scan - Node.js/npm
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Set up Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: '18'
+  #         cache: 'npm'
+  #
+  #     - name: Install Dependencies
+  #       run: npm ci
+  #
+  #     - name: Run SCA Scan
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #         ./ci.sh scan --app ${{ env.APP_NAME }} --npm
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+  # ==========================================================================
+  # Python Project
+  # ==========================================================================
+
+  # sca-scan-python:
+  #   name: SCA Scan - Python
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Install Dependencies
+  #       run: |
+  #         python -m pip install --upgrade pip
+  #         pip install -r requirements.txt
+  #
+  #     - name: Run SCA Scan
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #         ./ci.sh scan --app ${{ env.APP_NAME }} --python
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+  # ==========================================================================
+  # PARALLEL SCA SCAN WITH BUILD
+  # ==========================================================================
+  # Run SCA in parallel with application build
+  # ==========================================================================
+
+  # build-and-scan:
+  #   name: Build and SCA (Parallel)
+  #   runs-on: ubuntu-latest
+  #
+  #   strategy:
+  #     matrix:
+  #       task: [build, sca]
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Build Application
+  #       if: matrix.task == 'build'
+  #       run: |
+  #         # Your build commands
+  #         mvn clean package
+  #
+  #     - name: SCA Scan
+  #       if: matrix.task == 'sca'
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #         ./ci.sh scan --app ${{ env.APP_NAME }}
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+  # ==========================================================================
+  # SBOM GENERATION
+  # ==========================================================================
+  # Generate Software Bill of Materials
+  # ==========================================================================
+
+  # generate-sbom:
+  #   name: Generate SBOM
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Download SCA Agent
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #
+  #     - name: Generate SBOM
+  #       run: |
+  #         # Run scan
+  #         ./ci.sh scan \
+  #           --app ${{ env.APP_NAME }} \
+  #           --json > sca-results.json
+  #
+  #         # Generate SBOM in CycloneDX format
+  #         ./ci.sh sbom \
+  #           --format cyclonedx \
+  #           --output sbom.json
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+  #
+  #     - name: Upload SBOM
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: software-bill-of-materials
+  #         path: sbom.json
+  #         retention-days: 90
+  #
+  #     - name: Attach SBOM to Release
+  #       if: github.event_name == 'release'
+  #       uses: actions/upload-release-asset@v1
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       with:
+  #         upload_url: ${{ github.event.release.upload_url }}
+  #         asset_path: ./sbom.json
+  #         asset_name: sbom.json
+  #         asset_content_type: application/json
+
+  # ==========================================================================
+  # VULNERABILITY THRESHOLD CHECK
+  # ==========================================================================
+  # Fail build based on CVSS score or severity
+  # ==========================================================================
+
+  # sca-scan-with-threshold:
+  #   name: SCA Scan with Vulnerability Threshold
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Run SCA with Threshold
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #
+  #         # Fail on CVSS >= 7.0 or high severity
+  #         ./ci.sh scan \
+  #           --app ${{ env.APP_NAME }} \
+  #           --threshold-cvss 7.0 \
+  #           --threshold-cve-severity high
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+  # ==========================================================================
+  # MONOREPO / MULTI-PROJECT SCAN
+  # ==========================================================================
+  # Scan multiple projects in a monorepo
+  # ==========================================================================
+
+  # monorepo-scan:
+  #   name: Monorepo SCA Scan
+  #   runs-on: ubuntu-latest
+  #
+  #   strategy:
+  #     matrix:
+  #       project:
+  #         - name: frontend
+  #           path: ./frontend
+  #           type: npm
+  #         - name: backend
+  #           path: ./backend
+  #           type: maven
+  #         - name: api
+  #           path: ./api
+  #           type: python
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: SCA Scan - ${{ matrix.project.name }}
+  #       working-directory: ${{ matrix.project.path }}
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #         ./ci.sh scan \
+  #           --app "${{ env.APP_NAME }}-${{ matrix.project.name }}" \
+  #           --${{ matrix.project.type }}
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+  # ==========================================================================
+  # LICENSE COMPLIANCE CHECK
+  # ==========================================================================
+  # Check for license violations
+  # ==========================================================================
+
+  # license-check:
+  #   name: License Compliance Check
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Run SCA Scan
+  #       run: |
+  #         curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #         chmod +x ci.sh
+  #         ./ci.sh scan \
+  #           --app ${{ env.APP_NAME }} \
+  #           --json > sca-results.json
+  #       env:
+  #         SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+  #
+  #     - name: Check Licenses
+  #       run: |
+  #         # Parse SCA results for license information
+  #         # Fail if prohibited licenses are found
+  #
+  #         PROHIBITED_LICENSES=("GPL" "AGPL")
+  #
+  #         for license in "${PROHIBITED_LICENSES[@]}"; do
+  #           if grep -q "$license" sca-results.json; then
+  #             echo "❌ Prohibited license found: $license"
+  #             exit 1
+  #           fi
+  #         done
+  #
+  #         echo "✓ All licenses compliant"
+
+  # ==========================================================================
+  # COMMENT ON PR WITH RESULTS
+  # ==========================================================================
+  # Post SCA results as a PR comment
+  # ==========================================================================
+
+  # pr-comment:
+  #   name: Comment on Pull Request
+  #   runs-on: ubuntu-latest
+  #   needs: sca-scan
+  #   if: github.event_name == 'pull_request'
+  #
+  #   permissions:
+  #     pull-requests: write
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Download SCA Results
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: sca-results
+  #
+  #     - name: Parse and Comment
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const fs = require('fs');
+  #           const results = JSON.parse(fs.readFileSync('sca-results.json', 'utf8'));
+  #
+  #           const vulnCount = results.vulnerabilities?.length || 0;
+  #           const critical = results.vulnerabilities?.filter(v => v.severity === 'critical').length || 0;
+  #           const high = results.vulnerabilities?.filter(v => v.severity === 'high').length || 0;
+  #
+  #           const comment = `## Veracode SCA Scan Results
+  #
+  #           **Total Vulnerabilities**: ${vulnCount}
+  #           - 🔴 Critical: ${critical}
+  #           - 🟠 High: ${high}
+  #
+  #           ${vulnCount > 0 ? '⚠️ Review dependencies before merging' : '✅ No vulnerabilities found'}
+  #
+  #           [View Full Report in Veracode Platform](https://sca.veracode.com)
+  #           `;
+  #
+  #           github.rest.issues.createComment({
+  #             issue_number: context.issue.number,
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             body: comment
+  #           });
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# Veracode SCA Action Parameters:
+# - github_token: GitHub token for authentication
+# - create-issues: Create GitHub issues for vulnerabilities (true/false)
+# - fail-on-severity: Fail build on severity (critical, high, medium, low)
+# - min-cvss-for-issue: Minimum CVSS score to create issue (0.0-10.0)
+# - quick: Quick scan mode (faster, less comprehensive)
+#
+# SCA Agent Parameters:
+# --app: Application name in Veracode Platform
+# --allow-dirty: Allow uncommitted changes
+# --maven, --gradle, --npm, --pip, etc.: Specific package manager
+# --threshold-cvss: Minimum CVSS to fail (0.0-10.0)
+# --threshold-cve-severity: Minimum severity (low, medium, high, critical)
+# --json: Output results in JSON
+# --recursive: Scan subdirectories
+# --no-upload: Don't upload to platform
+#
+# Environment Variables:
+# - SRCCLR_API_TOKEN: SCA Agent API token (required)
+# - SRCCLR_SCM_URI: Repository URL
+# - SRCCLR_SCM_REF: Branch/tag
+# - SRCCLR_SCM_REV: Commit SHA
+#
+# Severity Levels:
+# - Critical: CVSS 9.0-10.0
+# - High: CVSS 7.0-8.9
+# - Medium: CVSS 4.0-6.9
+# - Low: CVSS 0.1-3.9
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Token Authentication:
+#    - Get token from Veracode Platform → Agent-Based Scan
+#    - Store as SRCCLR_API_TOKEN in GitHub Secrets
+#    - Verify token hasn't expired
+#
+# 2. No Vulnerabilities Detected:
+#    - Ensure dependency files exist (package.json, pom.xml, etc.)
+#    - Run package manager install before scan
+#    - Check that dependencies are actually vulnerable
+#
+# 3. Action Failures:
+#    - Check action version compatibility
+#    - Review action logs for specific errors
+#    - Ensure GITHUB_TOKEN has required permissions
+#
+# 4. False Positives:
+#    - Review findings in Veracode Platform
+#    - Mark false positives in platform
+#    - Adjust severity thresholds
+#
+# 5. Private Dependencies:
+#    - Configure authentication before scan
+#    - Set up .npmrc, settings.xml, etc.
+#    - Use secrets for credentials
+#
+# 6. Slow Scans:
+#    - Use --quick mode for faster scans
+#    - Cache dependencies with actions/cache
+#    - Scan only on specific events
+#
+# For more help: https://docs.veracode.com/r/c_sc_what_is
+# GitHub Action: https://github.com/veracode/veracode-sca
+# ============================================================================

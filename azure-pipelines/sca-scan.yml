@@ -1,0 +1,426 @@
+# ============================================================================
+# Veracode SCA Scan (Software Composition Analysis) - Azure Pipelines Template
+# ============================================================================
+# This template demonstrates how to integrate Veracode SCA scanning into your
+# Azure DevOps pipeline to identify vulnerabilities in third-party dependencies
+# and open-source components.
+#
+# SCA Scan analyzes:
+# - Third-party libraries and dependencies
+# - Known vulnerabilities (CVEs)
+# - License compliance and risks
+# - Outdated components
+# - Transitive dependencies
+#
+# SCA runs quickly (minutes) and can run in parallel with other scans.
+#
+# Prerequisites:
+# - Veracode SCA Agent credentials (SRCCLR_API_TOKEN)
+# - Dependency manifest files (pom.xml, package.json, requirements.txt, etc.)
+# - Source code with dependency declarations
+#
+# Documentation: https://docs.veracode.com/r/About_Software_Composition_Analysis
+# ============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+  paths:
+    exclude:
+      - '*.md'
+      - 'docs/**'
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# ============================================================================
+# VARIABLES CONFIGURATION
+# ============================================================================
+# Store SRCCLR_API_TOKEN in Azure Pipeline variables (mark as secret)
+# You can get this token from Veracode Platform → Agent-Based Scan → Tokens
+# ============================================================================
+
+variables:
+  # Option 1: Use variable group
+  # - group: 'veracode-credentials'
+
+  # Option 2: Reference pipeline variable
+  SRCCLR_API_TOKEN: $(srcclr-api-token)
+
+  # Application settings
+  APP_NAME: 'my-application'
+
+  # SCA configuration
+  FAIL_ON_VULNERABILITY: 'true'  # Fail build on vulnerabilities
+  VULNERABILITY_SEVERITY: 'high'  # Minimum severity to fail: low, medium, high, critical
+
+stages:
+  - stage: Dependencies
+    displayName: 'Build and SCA Scan'
+    jobs:
+      - job: SCAScan
+        displayName: 'Veracode SCA Scan'
+        steps:
+          # ====================================================================
+          # CHECKOUT BLOCK
+          # ====================================================================
+
+          - checkout: self
+
+          # ====================================================================
+          # METHOD 1: Using Veracode SCA Agent (Recommended)
+          # ====================================================================
+          # The SCA Agent automatically detects package managers and scans
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Download Veracode SCA Agent'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Downloading Veracode SCA Agent..."
+                curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+                chmod +x ci.sh
+                echo "SCA Agent downloaded successfully"
+
+          # ====================================================================
+          # SCAN BLOCK - Run SCA Scan
+          # ====================================================================
+          # The agent will:
+          # 1. Detect package managers (Maven, npm, pip, etc.)
+          # 2. Analyze dependency manifests
+          # 3. Identify vulnerable components
+          # 4. Report to Veracode Platform
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Run SCA Scan'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Starting Veracode SCA scan for $(APP_NAME)..."
+
+                # Run the SCA agent
+                ./ci.sh scan \
+                  --app $(APP_NAME) \
+                  --allow-dirty
+
+                echo "SCA scan completed"
+            env:
+              SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+            # Set continueOnError based on policy
+            continueOnError: false
+
+          # ====================================================================
+          # OPTIONAL: Scan Specific Package Manager
+          # ====================================================================
+          # If you need to target a specific package manager or directory
+          # ====================================================================
+
+          # Java/Maven example
+          # - task: Bash@3
+          #   displayName: 'SCA Scan - Maven'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       ./ci.sh scan \
+          #         --app $(APP_NAME) \
+          #         --maven
+          #   env:
+          #     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+
+          # Node.js/npm example
+          # - task: Bash@3
+          #   displayName: 'SCA Scan - npm'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       ./ci.sh scan \
+          #         --app $(APP_NAME) \
+          #         --npm
+          #   env:
+          #     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+
+          # Python/pip example
+          # - task: Bash@3
+          #   displayName: 'SCA Scan - Python'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       ./ci.sh scan \
+          #         --app $(APP_NAME) \
+          #         --python
+          #   env:
+          #     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+
+          # ====================================================================
+          # METHOD 2: Using Veracode CLI (Alternative)
+          # ====================================================================
+          # Use the Veracode CLI for more control
+          # Uncomment to use this approach
+          # ====================================================================
+
+          # - task: Bash@3
+          #   displayName: 'Download Veracode CLI'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          #       export PATH="$PATH:$HOME/.veracode-cli"
+          #
+          # - task: Bash@3
+          #   displayName: 'SCA Scan with CLI'
+          #   inputs:
+          #     targetType: 'inline'
+          #     script: |
+          #       veracode sca scan \
+          #         --source . \
+          #         --project $(APP_NAME)
+          #   env:
+          #     VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+          #     VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+  # ==========================================================================
+  # PARALLEL BUILD STAGE (Optional)
+  # ==========================================================================
+  # Run SCA in parallel with application build for faster pipelines
+  # ==========================================================================
+
+  # - stage: BuildAndScan
+  #   displayName: 'Build and Scan in Parallel'
+  #   jobs:
+  #     - job: Build
+  #       displayName: 'Build Application'
+  #       steps:
+  #         - task: Maven@3
+  #           displayName: 'Build with Maven'
+  #           inputs:
+  #             mavenPomFile: 'pom.xml'
+  #             goals: 'clean package'
+  #
+  #     - job: SCAScan
+  #       displayName: 'SCA Scan'
+  #       steps:
+  #         - task: Bash@3
+  #           displayName: 'Run SCA'
+  #           inputs:
+  #             targetType: 'inline'
+  #             script: |
+  #               curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #               chmod +x ci.sh
+  #               ./ci.sh scan --app $(APP_NAME)
+  #           env:
+  #             SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+
+# ============================================================================
+# ADVANCED CONFIGURATIONS
+# ============================================================================
+
+# ============================================================================
+# EXAMPLE: SCA with Vulnerability Threshold
+# ============================================================================
+# Fail build only on specific severity levels
+# ============================================================================
+
+# - task: Bash@3
+#   displayName: 'SCA Scan with Threshold'
+#   inputs:
+#     targetType: 'inline'
+#     script: |
+#       ./ci.sh scan \
+#         --app $(APP_NAME) \
+#         --threshold-cvss 7.0 \
+#         --threshold-cve-severity high
+#   env:
+#     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+
+# ============================================================================
+# EXAMPLE: SCA with SBOM Generation
+# ============================================================================
+# Generate Software Bill of Materials
+# ============================================================================
+
+# - task: Bash@3
+#   displayName: 'Generate SBOM'
+#   inputs:
+#     targetType: 'inline'
+#     script: |
+#       ./ci.sh scan \
+#         --app $(APP_NAME) \
+#         --json > sca-results.json
+#
+#       # Generate SBOM in CycloneDX format
+#       ./ci.sh sbom \
+#         --format cyclonedx \
+#         --output sbom.json
+#   env:
+#     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+#
+# - task: PublishPipelineArtifact@1
+#   displayName: 'Publish SBOM'
+#   inputs:
+#     targetPath: 'sbom.json'
+#     artifact: 'software-bill-of-materials'
+
+# ============================================================================
+# EXAMPLE: Multi-Language Project
+# ============================================================================
+# Scan multiple package managers in a monorepo
+# ============================================================================
+
+# - task: Bash@3
+#   displayName: 'SCA Scan - Frontend (npm)'
+#   inputs:
+#     targetType: 'inline'
+#     workingDirectory: 'frontend'
+#     script: |
+#       curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#       chmod +x ci.sh
+#       ./ci.sh scan --app $(APP_NAME)-frontend --npm
+#   env:
+#     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+#
+# - task: Bash@3
+#   displayName: 'SCA Scan - Backend (Maven)'
+#   inputs:
+#     targetType: 'inline'
+#     workingDirectory: 'backend'
+#     script: |
+#       curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+#       chmod +x ci.sh
+#       ./ci.sh scan --app $(APP_NAME)-backend --maven
+#   env:
+#     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+
+# ============================================================================
+# EXAMPLE: SCA with License Compliance
+# ============================================================================
+# Fail on specific license types
+# ============================================================================
+
+# - task: Bash@3
+#   displayName: 'SCA Scan with License Check'
+#   inputs:
+#     targetType: 'inline'
+#     script: |
+#       ./ci.sh scan \
+#         --app $(APP_NAME) \
+#         --allow-dirty \
+#         --no-upload
+#
+#       # Parse results for license violations
+#       # Custom script to check licenses
+#       python check_licenses.py sca-results.json
+#   env:
+#     SRCCLR_API_TOKEN: $(SRCCLR_API_TOKEN)
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# SCA Agent Parameters:
+# --app: Application name in Veracode Platform
+# --allow-dirty: Allow uncommitted changes
+# --maven: Scan Maven projects
+# --gradle: Scan Gradle projects
+# --npm: Scan npm projects
+# --yarn: Scan Yarn projects
+# --pnpm: Scan pnpm projects
+# --pip: Scan Python pip projects
+# --pipenv: Scan Python pipenv projects
+# --poetry: Scan Python poetry projects
+# --go: Scan Go modules
+# --ruby: Scan Ruby gems
+# --nuget: Scan .NET NuGet packages
+# --no-upload: Scan without uploading to platform
+# --recursive: Scan subdirectories
+# --url: Veracode Platform URL
+# --threshold-cvss: Minimum CVSS score to fail (0.0-10.0)
+# --threshold-cve-severity: Minimum severity (low, medium, high, critical)
+# --json: Output results in JSON format
+#
+# Environment Variables:
+# - SRCCLR_API_TOKEN: SCA Agent API token (required)
+# - SRCCLR_SCM_URI: Source control repository URL
+# - SRCCLR_SCM_REF: Git reference (branch/tag)
+# - SRCCLR_SCM_REF_TYPE: Reference type (branch, tag, commit)
+# - SRCCLR_SCM_REV: Git commit SHA
+#
+# Supported Package Managers:
+# - Maven (pom.xml)
+# - Gradle (build.gradle, build.gradle.kts)
+# - npm (package.json, package-lock.json)
+# - Yarn (yarn.lock)
+# - pnpm (pnpm-lock.yaml)
+# - pip (requirements.txt, Pipfile)
+# - Poetry (poetry.lock)
+# - Composer (composer.json, composer.lock)
+# - Go Modules (go.mod)
+# - NuGet (packages.config, *.csproj)
+# - Bundler (Gemfile, Gemfile.lock)
+# - CocoaPods (Podfile, Podfile.lock)
+#
+# Severity Levels:
+# - Critical: CVSS 9.0-10.0
+# - High: CVSS 7.0-8.9
+# - Medium: CVSS 4.0-6.9
+# - Low: CVSS 0.1-3.9
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Authentication Errors:
+#    - Verify SRCCLR_API_TOKEN is set correctly
+#    - Token should be from Agent-Based Scan section in Veracode
+#    - Ensure token is marked as "secret" in pipeline variables
+#    - Check token hasn't expired
+#
+# 2. No Dependencies Found:
+#    - Ensure dependency manifest files exist (pom.xml, package.json, etc.)
+#    - Verify you're in the correct directory
+#    - Check package manager is installed (if needed)
+#    - Use specific scan type flag (--maven, --npm, etc.)
+#
+# 3. Build Failures:
+#    - Set continueOnError: true to not fail build on vulnerabilities
+#    - Adjust threshold-cvss or threshold-cve-severity
+#    - Review vulnerabilities in Veracode Platform
+#    - Consider using --allow-dirty for uncommitted changes
+#
+# 4. Transitive Dependencies Not Scanned:
+#    - Ensure lock files exist (package-lock.json, yarn.lock, etc.)
+#    - Run package manager install/update before scan
+#    - Use --recursive for monorepos
+#
+# 5. Slow Scans:
+#    - SCA is typically fast (minutes)
+#    - Network issues may slow download of vulnerability data
+#    - Large dependency trees take longer
+#    - Consider caching dependencies
+#
+# 6. Private Dependencies:
+#    - Configure package manager authentication before scan
+#    - Set up .npmrc, settings.xml, etc.
+#    - Ensure credentials are available to agent
+#
+# 7. License Compliance:
+#    - Review licenses in Veracode Platform
+#    - Use custom scripts to parse JSON output
+#    - Define acceptable licenses in your organization
+#
+# For more help: https://docs.veracode.com/r/c_sc_what_is
+# ============================================================================
