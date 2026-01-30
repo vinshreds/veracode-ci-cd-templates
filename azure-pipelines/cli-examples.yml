@@ -1,0 +1,548 @@
+# ============================================================================
+# Veracode CLI Examples - Azure Pipelines Template
+# ============================================================================
+# This template demonstrates various Veracode CLI operations that can be
+# integrated into your Azure DevOps pipelines for advanced scanning workflows,
+# reporting, and automation.
+#
+# The Veracode CLI provides:
+# - Results download and reporting
+# - Scan status checking
+# - Application and sandbox management
+# - Flaw annotation and mitigation
+# - Custom API operations
+# - Policy compliance verification
+#
+# Prerequisites:
+# - Veracode API credentials (API ID and API Key)
+# - Veracode CLI installed or downloaded during pipeline
+#
+# Documentation: https://docs.veracode.com/r/Veracode_CLI
+# ============================================================================
+
+trigger: none  # Manual trigger only for examples
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# ============================================================================
+# VARIABLES
+# ============================================================================
+
+variables:
+  VERACODE_API_ID: $(veracode-api-id)
+  VERACODE_API_KEY: $(veracode-api-key)
+  APP_NAME: 'my-application'
+
+# ============================================================================
+# STAGES
+# ============================================================================
+
+stages:
+  # ==========================================================================
+  # SETUP AND INSTALLATION
+  # ==========================================================================
+
+  - stage: Setup
+    displayName: 'Veracode CLI Setup'
+    jobs:
+      - job: InstallCLI
+        displayName: 'Install Veracode CLI'
+        steps:
+          # ====================================================================
+          # INSTALLATION BLOCK - Download and Install Veracode CLI
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Download Veracode CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Installing Veracode CLI..."
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+                # Add to PATH for subsequent steps
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                # Verify installation
+                veracode --version
+                echo "✓ Veracode CLI installed successfully"
+
+          # ====================================================================
+          # AUTHENTICATION TEST
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Test Authentication'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Testing Veracode API authentication..."
+                veracode whoami
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+  # ==========================================================================
+  # SCAN OPERATIONS
+  # ==========================================================================
+
+  - stage: ScanOperations
+    displayName: 'Scan Operations'
+    jobs:
+      - job: ScanStatus
+        displayName: 'Check Scan Status'
+        steps:
+          - task: Bash@3
+            displayName: 'Get Build Status'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Checking scan status for $(APP_NAME)..."
+
+                # Get latest build info
+                veracode static scan info \
+                  --app "$(APP_NAME)"
+
+                echo "✓ Build status retrieved"
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+      - job: DownloadResults
+        displayName: 'Download Scan Results'
+        steps:
+          - task: Bash@3
+            displayName: 'Download Detailed Report'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Downloading scan results for $(APP_NAME)..."
+
+                # Download detailed XML report
+                veracode static scan results \
+                  --app "$(APP_NAME)" \
+                  --format xml \
+                  --output detailed-report.xml
+
+                echo "✓ Detailed report downloaded"
+                ls -lh detailed-report.xml
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Reports'
+            inputs:
+              targetPath: 'detailed-report.xml'
+              artifact: 'veracode-reports'
+
+  # ==========================================================================
+  # REPORTING
+  # ==========================================================================
+
+  - stage: Reporting
+    displayName: 'Generate Reports'
+    jobs:
+      - job: GenerateReports
+        displayName: 'Generate Various Reports'
+        steps:
+          - task: Bash@3
+            displayName: 'Generate Reports'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                mkdir -p reports
+
+                echo "Generating reports for $(APP_NAME)..."
+
+                # Summary report (JSON)
+                veracode static scan results \
+                  --app "$(APP_NAME)" \
+                  --format json \
+                  --output reports/summary.json
+
+                # Detailed findings (CSV)
+                veracode static findings \
+                  --app "$(APP_NAME)" \
+                  --format csv \
+                  --output reports/findings.csv
+
+                # Policy compliance report
+                veracode static policy \
+                  --app "$(APP_NAME)" \
+                  --format json \
+                  --output reports/policy.json
+
+                echo "✓ All reports generated"
+                ls -lh reports/
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish All Reports'
+            inputs:
+              targetPath: 'reports'
+              artifact: 'veracode-all-reports'
+
+  # ==========================================================================
+  # APPLICATION MANAGEMENT
+  # ==========================================================================
+
+  - stage: AppManagement
+    displayName: 'Application Management'
+    jobs:
+      - job: ListApplications
+        displayName: 'List Applications'
+        steps:
+          - task: Bash@3
+            displayName: 'List All Applications'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Listing all Veracode applications..."
+
+                veracode static app list \
+                  --format table
+
+                # Get specific app details
+                echo -e "\nDetails for $(APP_NAME):"
+                veracode static app info \
+                  --app "$(APP_NAME)"
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+      - job: CreateApplication
+        displayName: 'Create Application Profile'
+        steps:
+          - task: Bash@3
+            displayName: 'Create New Application'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                APP_NAME_NEW="new-application"
+
+                echo "Creating application profile: $APP_NAME_NEW..."
+
+                veracode static app create \
+                  --name "$APP_NAME_NEW" \
+                  --business-unit "Engineering" \
+                  --criticality "High"
+
+                echo "✓ Application profile created"
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+  # ==========================================================================
+  # SANDBOX OPERATIONS
+  # ==========================================================================
+
+  - stage: SandboxOps
+    displayName: 'Sandbox Operations'
+    jobs:
+      - job: SandboxManagement
+        displayName: 'Manage Sandboxes'
+        steps:
+          - task: Bash@3
+            displayName: 'Sandbox Operations'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                # List sandboxes
+                echo "Listing sandboxes for $(APP_NAME)..."
+                veracode static sandbox list \
+                  --app "$(APP_NAME)"
+
+                # Create a new sandbox
+                echo -e "\nCreating new sandbox..."
+                veracode static sandbox create \
+                  --app "$(APP_NAME)" \
+                  --name "Development"
+
+                # Get sandbox scan results
+                echo -e "\nGetting sandbox scan results..."
+                veracode static sandbox results \
+                  --app "$(APP_NAME)" \
+                  --sandbox "Development" \
+                  --format json \
+                  --output sandbox-results.json
+
+                # Promote sandbox to policy
+                # echo -e "\nPromoting sandbox scan..."
+                # veracode static sandbox promote \
+                #   --app "$(APP_NAME)" \
+                #   --sandbox "Development"
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+  # ==========================================================================
+  # FLAW MANAGEMENT
+  # ==========================================================================
+
+  - stage: FlawManagement
+    displayName: 'Flaw Management'
+    jobs:
+      - job: AnnotateFlaws
+        displayName: 'Annotate and Mitigate Flaws'
+        steps:
+          - task: Bash@3
+            displayName: 'Flaw Operations'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                # Get flaws
+                echo "Getting flaws for $(APP_NAME)..."
+                veracode static findings \
+                  --app "$(APP_NAME)" \
+                  --format json \
+                  --output flaws.json
+
+                # Example: Annotate a flaw (you'll need the flaw ID)
+                # FLAW_ID="12345"
+                # echo "Annotating flaw $FLAW_ID..."
+                # veracode static flaw annotate \
+                #   --app "$(APP_NAME)" \
+                #   --flaw-id "$FLAW_ID" \
+                #   --action "Mitigated" \
+                #   --comment "False positive - validated by security team"
+
+                echo "✓ Flaw operations completed"
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+  # ==========================================================================
+  # POLICY COMPLIANCE
+  # ==========================================================================
+
+  - stage: PolicyCheck
+    displayName: 'Policy Compliance'
+    jobs:
+      - job: CheckCompliance
+        displayName: 'Check Policy Compliance'
+        steps:
+          - task: Bash@3
+            displayName: 'Verify Policy Compliance'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Checking policy compliance for $(APP_NAME)..."
+
+                # Get policy status
+                veracode static policy \
+                  --app "$(APP_NAME)" \
+                  --format json \
+                  --output policy-status.json
+
+                # Parse compliance status
+                COMPLIANCE=$(cat policy-status.json | jq -r '.policy_compliance_status' || echo "Unknown")
+
+                echo "Policy Compliance: $COMPLIANCE"
+
+                if [[ "$COMPLIANCE" == "Pass" ]]; then
+                  echo "✓ Application passed policy compliance"
+                  exit 0
+                else
+                  echo "✗ Application failed policy compliance"
+                  exit 1
+                fi
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+  # ==========================================================================
+  # SCA CLI OPERATIONS
+  # ==========================================================================
+
+  - stage: SCACLIOps
+    displayName: 'SCA CLI Operations'
+    jobs:
+      - job: SCAOperations
+        displayName: 'SCA CLI Examples'
+        steps:
+          - task: Bash@3
+            displayName: 'SCA CLI Operations'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                # Get SCA results
+                echo "Getting SCA results for $(APP_NAME)..."
+                veracode sca results \
+                  --app "$(APP_NAME)" \
+                  --format json \
+                  --output sca-results.json
+
+                # Get workspace info
+                echo -e "\nGetting SCA workspace info..."
+                veracode sca workspace list
+
+                # Get vulnerability details
+                echo -e "\nGetting vulnerability summary..."
+                veracode sca vulnerabilities \
+                  --app "$(APP_NAME)" \
+                  --format table
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+  # ==========================================================================
+  # CUSTOM API OPERATIONS
+  # ==========================================================================
+
+  - stage: CustomAPI
+    displayName: 'Custom API Operations'
+    jobs:
+      - job: APIExamples
+        displayName: 'Raw API Calls'
+        steps:
+          - task: Bash@3
+            displayName: 'Custom API Operations'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                # Get application GUID
+                echo "Getting application GUID..."
+                veracode static app info \
+                  --app "$(APP_NAME)" \
+                  --format json | jq -r '.guid'
+
+                # Get team information
+                echo -e "\nGetting team information..."
+                veracode configure api \
+                  --endpoint "/api/authn/v2/teams" \
+                  --method GET
+
+                # Get user information
+                echo -e "\nGetting current user info..."
+                veracode whoami --format json | jq .
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+# ============================================================================
+# VERACODE CLI COMMAND REFERENCE
+# ============================================================================
+#
+# Installation:
+# curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+#
+# Authentication:
+# Environment variables (recommended for CI/CD):
+#   VERACODE_API_KEY_ID
+#   VERACODE_API_KEY_SECRET
+#
+# Static Analysis Commands:
+# - veracode static scan info --app <name>
+# - veracode static scan results --app <name> --format <xml|json|csv>
+# - veracode static findings --app <name>
+# - veracode static policy --app <name>
+# - veracode static app list
+# - veracode static app create --name <name>
+# - veracode static app info --app <name>
+# - veracode static app delete --app <name>
+#
+# Sandbox Commands:
+# - veracode static sandbox list --app <name>
+# - veracode static sandbox create --app <name> --name <sandbox>
+# - veracode static sandbox results --app <name> --sandbox <name>
+# - veracode static sandbox promote --app <name> --sandbox <name>
+# - veracode static sandbox delete --app <name> --sandbox <name>
+#
+# Flaw Commands:
+# - veracode static findings --app <name>
+# - veracode static flaw annotate --app <name> --flaw-id <id>
+#
+# SCA Commands:
+# - veracode sca scan --source <path>
+# - veracode sca results --app <name>
+# - veracode sca vulnerabilities --app <name>
+# - veracode sca workspace list
+#
+# Pipeline Scan:
+# - veracode pipeline scan --file <path>
+#
+# Utility Commands:
+# - veracode whoami
+# - veracode configure
+# - veracode --version
+# - veracode --help
+#
+# Output Formats:
+# - table (default, human-readable)
+# - json (machine-readable)
+# - xml (detailed reports)
+# - csv (spreadsheet-friendly)
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. CLI Not Found:
+#    - Ensure installation script ran successfully
+#    - Add to PATH: export PATH="$HOME/.veracode-cli:$PATH"
+#    - Verify with: veracode --version
+#
+# 2. Authentication Errors:
+#    - Check VERACODE_API_KEY_ID is set
+#    - Check VERACODE_API_KEY_SECRET is set
+#    - Verify credentials with: veracode whoami
+#    - Ensure API credentials haven't expired
+#
+# 3. Application Not Found:
+#    - Verify exact application name (case-sensitive)
+#    - List all apps: veracode static app list
+#    - Use GUID instead: --app-guid <guid>
+#
+# 4. No Results Available:
+#    - Ensure scan has completed
+#    - Check scan status first
+#    - Verify you have permission to access results
+#
+# 5. Command Failures:
+#    - Check CLI version: veracode --version
+#    - Update CLI if needed
+#    - Review error messages in output
+#    - Add --verbose for detailed logging
+#
+# For more help: https://docs.veracode.com/r/Veracode_CLI
+# ============================================================================

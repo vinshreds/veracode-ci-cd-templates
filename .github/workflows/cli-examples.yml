@@ -1,0 +1,340 @@
+# ============================================================================
+# Veracode CLI Examples - GitHub Actions Workflow
+# ============================================================================
+# This workflow demonstrates various Veracode CLI operations for advanced
+# scanning workflows, reporting, and automation in GitHub Actions.
+#
+# The Veracode CLI provides:
+# - Results download and reporting
+# - Scan status checking
+# - Application and sandbox management
+# - Flaw annotation and mitigation
+# - Custom API operations
+# - Policy compliance verification
+#
+# Prerequisites:
+# - Veracode API credentials in GitHub Secrets
+#
+# Documentation: https://docs.veracode.com/r/Veracode_CLI
+# ============================================================================
+
+name: Veracode CLI Examples
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'CLI Operation to perform'
+        required: true
+        type: choice
+        options:
+          - scan-status
+          - download-results
+          - generate-reports
+          - manage-sandboxes
+          - check-policy
+          - all-examples
+
+env:
+  APP_NAME: 'my-application'
+
+jobs:
+  # ==========================================================================
+  # SETUP
+  # ==========================================================================
+
+  setup:
+    name: Install Veracode CLI
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'all-examples' || github.event.inputs.operation == 'scan-status'
+
+    steps:
+      - name: Install Veracode CLI
+        run: |
+          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          export PATH="$HOME/.veracode-cli:$PATH"
+          veracode --version
+
+      - name: Test Authentication
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          veracode whoami
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+  # ==========================================================================
+  # SCAN OPERATIONS
+  # ==========================================================================
+
+  scan-status:
+    name: Check Scan Status
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'scan-status' || github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Get Build Status
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          veracode static scan info --app "${{ env.APP_NAME }}"
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+  download-results:
+    name: Download Scan Results
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'download-results' || github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Download Reports
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          # Detailed XML report
+          veracode static scan results \
+            --app "${{ env.APP_NAME }}" \
+            --format xml \
+            --output detailed-report.xml
+
+          # JSON summary
+          veracode static scan results \
+            --app "${{ env.APP_NAME }}" \
+            --format json \
+            --output summary.json
+
+          ls -lh *.xml *.json
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+      - name: Upload Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-reports
+          path: |
+            detailed-report.xml
+            summary.json
+          retention-days: 90
+
+  # ==========================================================================
+  # REPORTING
+  # ==========================================================================
+
+  generate-reports:
+    name: Generate Various Reports
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'generate-reports' || github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Generate All Reports
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p reports
+
+          # Findings CSV
+          veracode static findings \
+            --app "${{ env.APP_NAME }}" \
+            --format csv \
+            --output reports/findings.csv
+
+          # Policy JSON
+          veracode static policy \
+            --app "${{ env.APP_NAME }}" \
+            --format json \
+            --output reports/policy.json
+
+          ls -lh reports/
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+      - name: Upload All Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-reports
+          path: reports/
+
+  # ==========================================================================
+  # APPLICATION MANAGEMENT
+  # ==========================================================================
+
+  app-management:
+    name: Application Management
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: List Applications
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          veracode static app list --format table
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+      - name: Get App Details
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          veracode static app info --app "${{ env.APP_NAME }}"
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+  # ==========================================================================
+  # SANDBOX OPERATIONS
+  # ==========================================================================
+
+  sandbox-ops:
+    name: Sandbox Operations
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'manage-sandboxes' || github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Manage Sandboxes
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          # List sandboxes
+          echo "Listing sandboxes..."
+          veracode static sandbox list --app "${{ env.APP_NAME }}"
+
+          # Create sandbox (if needed)
+          # veracode static sandbox create \
+          #   --app "${{ env.APP_NAME }}" \
+          #   --name "Development"
+
+          # Get sandbox results
+          # veracode static sandbox results \
+          #   --app "${{ env.APP_NAME }}" \
+          #   --sandbox "Development" \
+          #   --format json
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+  # ==========================================================================
+  # POLICY COMPLIANCE
+  # ==========================================================================
+
+  policy-check:
+    name: Check Policy Compliance
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'check-policy' || github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI and jq
+        run: |
+          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Verify Policy Compliance
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          veracode static policy \
+            --app "${{ env.APP_NAME }}" \
+            --format json \
+            --output policy.json
+
+          COMPLIANCE=$(jq -r '.policy_compliance_status' policy.json)
+          echo "Policy Compliance: $COMPLIANCE"
+
+          if [[ "$COMPLIANCE" == "Pass" ]]; then
+            echo "✓ Passed policy"
+            exit 0
+          else
+            echo "✗ Failed policy"
+            exit 1
+          fi
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+  # ==========================================================================
+  # FLAW MANAGEMENT
+  # ==========================================================================
+
+  flaw-management:
+    name: Manage Flaws
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Get Flaws
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          veracode static findings \
+            --app "${{ env.APP_NAME }}" \
+            --format json \
+            --output flaws.json
+
+          # Example: Annotate a specific flaw
+          # veracode static flaw annotate \
+          #   --app "${{ env.APP_NAME }}" \
+          #   --flaw-id "12345" \
+          #   --action "Mitigated" \
+          #   --comment "False positive"
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+      - name: Upload Flaws Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaws-report
+          path: flaws.json
+
+  # ==========================================================================
+  # SCA CLI OPERATIONS
+  # ==========================================================================
+
+  sca-cli:
+    name: SCA CLI Operations
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: SCA Operations
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          # Get SCA results
+          veracode sca results \
+            --app "${{ env.APP_NAME }}" \
+            --format json \
+            --output sca-results.json
+
+          # List workspaces
+          veracode sca workspace list
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+# ============================================================================
+# CLI COMMAND REFERENCE
+# ============================================================================
+# See Azure Pipelines template for full command reference
+# ============================================================================

@@ -1,0 +1,114 @@
+# ============================================================================
+# Veracode CLI Examples - Bitbucket Pipelines
+# ============================================================================
+# Various Veracode CLI operations for advanced scanning workflows.
+#
+# Documentation: https://docs.veracode.com/r/Veracode_CLI
+# ============================================================================
+
+image: alpine:latest
+
+definitions:
+  steps:
+    - step: &cli-setup
+        name: Install Veracode CLI
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - veracode --version
+          - veracode whoami
+
+    - step: &scan-status
+        name: Check Scan Status
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - veracode static scan info --app "${BITBUCKET_REPO_SLUG}"
+
+    - step: &download-results
+        name: Download Scan Results
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - mkdir -p reports
+          - veracode static scan results --app "${BITBUCKET_REPO_SLUG}" --format xml --output reports/detailed.xml
+          - veracode static scan results --app "${BITBUCKET_REPO_SLUG}" --format json --output reports/summary.json
+        artifacts:
+          - reports/**
+
+    - step: &generate-reports
+        name: Generate Reports
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - mkdir -p reports
+          - veracode static findings --app "${BITBUCKET_REPO_SLUG}" --format csv --output reports/findings.csv
+          - veracode static policy --app "${BITBUCKET_REPO_SLUG}" --format json --output reports/policy.json
+        artifacts:
+          - reports/**
+
+    - step: &list-apps
+        name: List Applications
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - veracode static app list --format table
+          - veracode static app info --app "${BITBUCKET_REPO_SLUG}"
+
+    - step: &sandbox-ops
+        name: Sandbox Operations
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - veracode static sandbox list --app "${BITBUCKET_REPO_SLUG}"
+
+    - step: &check-policy
+        name: Check Policy Compliance
+        script:
+          - apk add --no-cache curl bash jq
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - veracode static policy --app "${BITBUCKET_REPO_SLUG}" --format json --output policy.json
+          - COMPLIANCE=$(jq -r '.policy_compliance_status' policy.json)
+          - echo "Policy - $COMPLIANCE"
+          - test "$COMPLIANCE" = "Pass"
+
+pipelines:
+  custom:
+    cli-setup:
+      - step: *cli-setup
+
+    scan-status:
+      - step: *scan-status
+
+    download-results:
+      - step: *download-results
+
+    generate-reports:
+      - step: *generate-reports
+
+    list-apps:
+      - step: *list-apps
+
+    sandbox-ops:
+      - step: *sandbox-ops
+
+    check-policy:
+      - step: *check-policy
+
+    all-operations:
+      - step: *cli-setup
+      - step: *scan-status
+      - step: *download-results
+      - step: *generate-reports
+      - step: *check-policy
+
+# ============================================================================
+# CLI COMMAND REFERENCE - See Azure Pipelines template for full reference
+# ============================================================================

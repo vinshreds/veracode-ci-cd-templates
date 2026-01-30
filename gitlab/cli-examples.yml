@@ -1,0 +1,137 @@
+# ============================================================================
+# Veracode CLI Examples - GitLab CI Template
+# ============================================================================
+# Various Veracode CLI operations for advanced scanning workflows.
+#
+# Documentation: https://docs.veracode.com/r/Veracode_CLI
+# ============================================================================
+
+stages:
+  - setup
+  - operations
+  - reporting
+
+variables:
+  APP_NAME: "my-application"
+
+# ==========================================================================
+# SETUP
+# ==========================================================================
+
+veracode:cli-setup:
+  stage: setup
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+    - export PATH="$HOME/.veracode-cli:$PATH"
+    - veracode --version
+    - veracode whoami
+  only:
+    - web  # Manual trigger
+
+# ==========================================================================
+# SCAN OPERATIONS
+# ==========================================================================
+
+veracode:scan-status:
+  stage: operations
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+    - export PATH="$HOME/.veracode-cli:$PATH"
+    - veracode static scan info --app "$APP_NAME"
+  only:
+    - web
+
+veracode:download-results:
+  stage: operations
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+    - export PATH="$HOME/.veracode-cli:$PATH"
+    - mkdir -p reports
+    - veracode static scan results --app "$APP_NAME" --format xml --output reports/detailed.xml
+    - veracode static scan results --app "$APP_NAME" --format json --output reports/summary.json
+  artifacts:
+    paths:
+      - reports/
+    expire_in: 90 days
+  only:
+    - web
+
+# ==========================================================================
+# REPORTING
+# ==========================================================================
+
+veracode:generate-reports:
+  stage: reporting
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+    - export PATH="$HOME/.veracode-cli:$PATH"
+    - mkdir -p reports
+    - veracode static findings --app "$APP_NAME" --format csv --output reports/findings.csv
+    - veracode static policy --app "$APP_NAME" --format json --output reports/policy.json
+  artifacts:
+    paths:
+      - reports/
+    expire_in: 30 days
+  only:
+    - web
+
+# ==========================================================================
+# APPLICATION MANAGEMENT
+# ==========================================================================
+
+veracode:list-apps:
+  stage: operations
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+    - export PATH="$HOME/.veracode-cli:$PATH"
+    - veracode static app list --format table
+    - veracode static app info --app "$APP_NAME"
+  only:
+    - web
+
+# ==========================================================================
+# SANDBOX OPERATIONS
+# ==========================================================================
+
+veracode:sandbox-ops:
+  stage: operations
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+    - export PATH="$HOME/.veracode-cli:$PATH"
+    - veracode static sandbox list --app "$APP_NAME"
+  only:
+    - web
+
+# ==========================================================================
+# POLICY COMPLIANCE
+# ==========================================================================
+
+veracode:check-policy:
+  stage: operations
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash jq
+    - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+    - export PATH="$HOME/.veracode-cli:$PATH"
+    - veracode static policy --app "$APP_NAME" --format json --output policy.json
+    - COMPLIANCE=$(jq -r '.policy_compliance_status' policy.json)
+    - echo "Policy Compliance - $COMPLIANCE"
+    - test "$COMPLIANCE" = "Pass"
+  only:
+    - web
+
+# ============================================================================
+# CLI COMMAND REFERENCE - See Azure Pipelines template for full reference
+# ============================================================================
