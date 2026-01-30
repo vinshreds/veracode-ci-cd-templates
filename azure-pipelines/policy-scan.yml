@@ -1,0 +1,413 @@
+# ============================================================================
+# Veracode Policy Scan (Comprehensive SAST) - Azure Pipelines Template
+# ============================================================================
+# This template demonstrates how to integrate Veracode Policy Scan into your
+# Azure DevOps pipeline for comprehensive Static Application Security Testing
+# and policy compliance verification.
+#
+# Policy Scan provides thorough security analysis and is used for:
+# - Release candidate validation
+# - Policy compliance reporting
+# - Detailed flaw remediation guidance
+# - Security gate checks before production
+#
+# Note: Policy Scan takes longer than Pipeline Scan (hours vs minutes)
+# but provides comprehensive results and policy enforcement.
+#
+# Prerequisites:
+# - Veracode API credentials stored in Azure Pipeline variables
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode application profile created (or auto-created)
+#
+# Documentation: https://docs.veracode.com/r/About_Static_Analysis
+# ============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+  paths:
+    exclude:
+      - '*.md'
+      - 'docs/**'
+
+# Only run on release branches and main
+pr: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# ============================================================================
+# VARIABLES CONFIGURATION
+# ============================================================================
+
+variables:
+  # Option 1: Use a variable group (recommended)
+  # - group: 'veracode-credentials'
+
+  # Option 2: Reference pipeline variables
+  VERACODE_API_ID: $(veracode-api-id)
+  VERACODE_API_KEY: $(veracode-api-key)
+
+  # Application configuration
+  APP_NAME: 'my-application'
+  APP_VERSION: '$(Build.BuildNumber)'
+
+  # Scan configuration
+  SCAN_TIMEOUT: '60'  # Minutes to wait for scan completion
+  FAIL_BUILD_ON_POLICY: 'true'  # Fail if policy compliance fails
+
+stages:
+  - stage: Build
+    displayName: 'Build Application'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build and Package'
+        steps:
+          # ====================================================================
+          # BUILD BLOCK
+          # ====================================================================
+
+          - task: Maven@3
+            displayName: 'Build with Maven'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean package'
+              options: '-DskipTests'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.11'
+
+          # ====================================================================
+          # PUBLISH BUILD ARTIFACT
+          # ====================================================================
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Build Artifact'
+            inputs:
+              targetPath: 'target'
+              artifact: 'build-artifact'
+              publishLocation: 'pipeline'
+
+  - stage: SecurityScan
+    displayName: 'Veracode Policy Scan'
+    dependsOn: Build
+    jobs:
+      - job: UploadAndScan
+        displayName: 'Upload to Veracode Platform'
+        steps:
+          # ====================================================================
+          # DOWNLOAD BUILD ARTIFACT
+          # ====================================================================
+
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download Build Artifact'
+            inputs:
+              artifact: 'build-artifact'
+              path: '$(System.DefaultWorkingDirectory)/build-output'
+
+          # ====================================================================
+          # METHOD 1: Using Veracode API Wrapper (Recommended)
+          # ====================================================================
+          # The API wrapper handles upload chunking and retry logic
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Download Veracode API Wrapper'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Downloading Veracode API Wrapper..."
+                curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+                mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+                echo "API Wrapper downloaded successfully"
+
+          # ====================================================================
+          # UPLOAD BLOCK - Upload Application for Scanning
+          # ====================================================================
+          # This uploads your application to Veracode Platform
+          #
+          # Key Parameters:
+          # - appname: Application name in Veracode Platform
+          # - createprofile: Auto-create app profile if it doesn't exist
+          # - version: Build version identifier
+          # - filepath: Path to file(s) to upload
+          # - sandboxname: Optional sandbox for testing
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Upload to Veracode'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Uploading $(APP_NAME) version $(APP_VERSION) to Veracode..."
+
+                java -jar VeracodeJavaAPI.jar \
+                  -vid "$(VERACODE_API_ID)" \
+                  -vkey "$(VERACODE_API_KEY)" \
+                  -action UploadAndScan \
+                  -appname "$(APP_NAME)" \
+                  -createprofile true \
+                  -version "$(APP_VERSION)" \
+                  -filepath "$(System.DefaultWorkingDirectory)/build-output/*.jar" \
+                  -autoscan true
+
+                echo "Upload completed. Scan initiated."
+            env:
+              VERACODE_API_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY: $(VERACODE_API_KEY)
+
+          # ====================================================================
+          # WAIT BLOCK - Wait for Scan Completion
+          # ====================================================================
+          # Poll Veracode Platform until scan completes
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Wait for Scan Completion'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Waiting for scan to complete (timeout: $(SCAN_TIMEOUT) minutes)..."
+
+                START_TIME=$(date +%s)
+                TIMEOUT_SECONDS=$(($(SCAN_TIMEOUT) * 60))
+
+                while true; do
+                  # Get scan status
+                  STATUS=$(java -jar VeracodeJavaAPI.jar \
+                    -vid "$(VERACODE_API_ID)" \
+                    -vkey "$(VERACODE_API_KEY)" \
+                    -action GetBuildInfo \
+                    -appname "$(APP_NAME)" \
+                    -version "$(APP_VERSION)" | grep "status=" | cut -d'"' -f2)
+
+                  echo "Current scan status: $STATUS"
+
+                  # Check if scan is complete
+                  if [[ "$STATUS" == "Results Ready" ]]; then
+                    echo "✓ Scan completed successfully"
+                    break
+                  elif [[ "$STATUS" == "Scan Failed" ]] || [[ "$STATUS" == "Incomplete" ]]; then
+                    echo "✗ Scan failed or incomplete"
+                    exit 1
+                  fi
+
+                  # Check timeout
+                  CURRENT_TIME=$(date +%s)
+                  ELAPSED=$((CURRENT_TIME - START_TIME))
+                  if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+                    echo "✗ Scan timeout after $(SCAN_TIMEOUT) minutes"
+                    exit 1
+                  fi
+
+                  # Wait before next check
+                  echo "Waiting 60 seconds before next check..."
+                  sleep 60
+                done
+            env:
+              VERACODE_API_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY: $(VERACODE_API_KEY)
+
+      - job: CheckPolicyCompliance
+        displayName: 'Check Policy Compliance'
+        dependsOn: UploadAndScan
+        steps:
+          # ====================================================================
+          # DOWNLOAD API WRAPPER
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Download Veracode API Wrapper'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+                mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+
+          # ====================================================================
+          # POLICY COMPLIANCE BLOCK
+          # ====================================================================
+          # Check if the scan passed policy compliance
+          # ====================================================================
+
+          - task: Bash@3
+            displayName: 'Check Policy Compliance'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "Checking policy compliance for $(APP_NAME)..."
+
+                # Get detailed results
+                java -jar VeracodeJavaAPI.jar \
+                  -vid "$(VERACODE_API_ID)" \
+                  -vkey "$(VERACODE_API_KEY)" \
+                  -action DetailedReport \
+                  -appname "$(APP_NAME)" \
+                  -version "$(APP_VERSION)" \
+                  -outputfilepath "detailed-report.xml"
+
+                # Get summary report
+                java -jar VeracodeJavaAPI.jar \
+                  -vid "$(VERACODE_API_ID)" \
+                  -vkey "$(VERACODE_API_KEY)" \
+                  -action SummaryReport \
+                  -appname "$(APP_NAME)" \
+                  -version "$(APP_VERSION)" \
+                  -outputfilepath "summary-report.pdf"
+
+                # Check policy compliance status
+                POLICY_COMPLIANCE=$(grep -oP 'policy_compliance_status="\K[^"]+' detailed-report.xml || echo "Unknown")
+
+                echo "Policy Compliance Status: $POLICY_COMPLIANCE"
+
+                if [[ "$POLICY_COMPLIANCE" == "Pass" ]]; then
+                  echo "✓ Build passed policy compliance"
+                  exit 0
+                elif [[ "$POLICY_COMPLIANCE" == "Not Assessed" ]]; then
+                  echo "⚠ Policy compliance not assessed"
+                  if [[ "$(FAIL_BUILD_ON_POLICY)" == "true" ]]; then
+                    exit 1
+                  fi
+                else
+                  echo "✗ Build failed policy compliance"
+                  if [[ "$(FAIL_BUILD_ON_POLICY)" == "true" ]]; then
+                    exit 1
+                  fi
+                fi
+            env:
+              VERACODE_API_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY: $(VERACODE_API_KEY)
+
+          # ====================================================================
+          # RESULTS BLOCK - Publish Reports
+          # ====================================================================
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Scan Reports'
+            condition: always()
+            inputs:
+              targetPath: '$(System.DefaultWorkingDirectory)'
+              artifact: 'veracode-policy-scan-results'
+              publishLocation: 'pipeline'
+            # Publish XML and PDF reports
+
+# ============================================================================
+# ALTERNATIVE: Using Veracode Upload API (REST)
+# ============================================================================
+# This section shows how to use the REST API instead of Java wrapper
+# Uncomment to use this approach
+# ============================================================================
+
+# - task: Bash@3
+#   displayName: 'Upload via REST API'
+#   inputs:
+#     targetType: 'inline'
+#     script: |
+#       # Create prescan
+#       APP_ID=$(curl -s --compressed -H "Authorization: Basic $(echo -n "$(VERACODE_API_ID):$(VERACODE_API_KEY)" | base64)" \
+#         "https://analysiscenter.veracode.com/api/5.0/getapplist.do" | \
+#         grep -oP 'app_name="$(APP_NAME)".*?app_id="\K[^"]+' || echo "")
+#
+#       if [ -z "$APP_ID" ]; then
+#         echo "Creating new application profile..."
+#         # Create app profile via API
+#       fi
+#
+#       # Begin prescan
+#       curl --compressed -H "Authorization: Basic $(echo -n "$(VERACODE_API_ID):$(VERACODE_API_KEY)" | base64)" \
+#         -F "app_id=$APP_ID" \
+#         -F "version=$(APP_VERSION)" \
+#         -F "auto_scan=true" \
+#         -F "file=@$(System.DefaultWorkingDirectory)/build-output/app.jar" \
+#         "https://analysiscenter.veracode.com/api/5.0/uploadfile.do"
+
+# ============================================================================
+# SANDBOX SCANNING EXAMPLE
+# ============================================================================
+# Use sandboxes for testing without affecting production scans
+# ============================================================================
+
+# - task: Bash@3
+#   displayName: 'Upload to Sandbox'
+#   inputs:
+#     targetType: 'inline'
+#     script: |
+#       java -jar VeracodeJavaAPI.jar \
+#         -vid "$(VERACODE_API_ID)" \
+#         -vkey "$(VERACODE_API_KEY)" \
+#         -action UploadAndScan \
+#         -appname "$(APP_NAME)" \
+#         -version "$(APP_VERSION)" \
+#         -filepath "$(System.DefaultWorkingDirectory)/build-output/*.jar" \
+#         -sandboxname "Development" \
+#         -createsandbox true \
+#         -autoscan true
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# UploadAndScan Parameters:
+# - appname: Application name in Veracode Platform
+# - createprofile: true/false - Create app profile if doesn't exist
+# - version: Build version/identifier
+# - filepath: Path to file(s) to upload (supports wildcards)
+# - sandboxname: Sandbox name (optional)
+# - createsandbox: true/false - Create sandbox if doesn't exist
+# - autoscan: true/false - Automatically start scan after upload
+# - scantimeout: Minutes to wait before timing out
+# - criticality: VeryHigh, High, Medium, Low, VeryLow
+# - businessunit: Business unit name
+# - teams: Team names (comma-separated)
+#
+# Report Types:
+# - DetailedReport: XML with all findings
+# - SummaryReport: PDF executive summary
+# - ThirdPartyReport: PDF with third-party component info
+# - ComplianceReport: PDF compliance status
+#
+# Build Status Values:
+# - Incomplete: Upload in progress
+# - Pre-Scan Submitted: Waiting for prescan
+# - Pre-Scan Success: Prescan completed
+# - Scan In Process: Static analysis running
+# - Results Ready: Scan completed
+# - Scan Failed: Error during scanning
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Upload Failures:
+#    - Verify file size is under Veracode limits (2GB per file)
+#    - Check network connectivity to Veracode Platform
+#    - Ensure file format is supported (JAR, WAR, ZIP, etc.)
+#    - Verify API credentials have upload permissions
+#
+# 2. Application Profile Issues:
+#    - Set createprofile=true to auto-create profiles
+#    - Verify exact app name spelling (case-sensitive)
+#    - Check platform permissions for app creation
+#
+# 3. Scan Timeout:
+#    - Large applications may need longer timeout
+#    - Increase SCAN_TIMEOUT variable
+#    - Check Veracode Platform for scan status
+#
+# 4. Policy Compliance Failures:
+#    - Review detailed-report.xml for specific flaws
+#    - Check policy configuration in Veracode Platform
+#    - Consider using sandbox for development builds
+#
+# 5. API Wrapper Errors:
+#    - Ensure Java 8+ is available
+#    - Verify wrapper version compatibility
+#    - Check for transient network issues
+#
+# For more help: https://docs.veracode.com/r/c_about_wrappers
+# ============================================================================

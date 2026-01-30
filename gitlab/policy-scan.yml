@@ -1,0 +1,524 @@
+# ============================================================================
+# Veracode Policy Scan (Comprehensive SAST) - GitLab CI Template
+# ============================================================================
+# This template demonstrates how to integrate Veracode Policy Scan into your
+# GitLab CI/CD pipeline for comprehensive Static Application Security Testing
+# and policy compliance verification.
+#
+# Policy Scan provides thorough security analysis and is used for:
+# - Release candidate validation
+# - Policy compliance reporting
+# - Detailed flaw remediation guidance
+# - Security gate checks before production
+#
+# Note: Policy Scan takes longer than Pipeline Scan (hours vs minutes)
+# but provides comprehensive results and policy enforcement.
+#
+# Prerequisites:
+# - Veracode API credentials stored in GitLab CI/CD variables
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode application profile created (or auto-created)
+#
+# Usage: Copy relevant stages/jobs into your .gitlab-ci.yml file
+#
+# Documentation: https://docs.veracode.com/r/About_Static_Analysis
+# ============================================================================
+
+# ============================================================================
+# PIPELINE CONFIGURATION
+# ============================================================================
+
+stages:
+  - build
+  - upload
+  - verify
+  - report
+
+# ============================================================================
+# VARIABLES
+# ============================================================================
+
+variables:
+  APP_NAME: "my-application"
+  APP_VERSION: "$CI_PIPELINE_IID"
+  BUILD_ARTIFACT: "target/*.jar"
+  SCAN_TIMEOUT_MINUTES: "60"
+  FAIL_ON_POLICY_VIOLATION: "true"
+
+# ============================================================================
+# BUILD STAGE
+# ============================================================================
+
+build:application:
+  stage: build
+  image: maven:3.9-eclipse-temurin-11
+
+  script:
+    - echo "Building $APP_NAME version $APP_VERSION..."
+    - mvn clean package -DskipTests
+    - ls -la target/
+
+  artifacts:
+    name: "build-artifacts-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - target/*.jar
+    expire_in: 1 hour
+
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .m2/repository
+
+  only:
+    - main
+    - /^release\/.*$/
+    - tags
+
+# ============================================================================
+# UPLOAD AND SCAN STAGE
+# ============================================================================
+
+veracode:upload:
+  stage: upload
+  image: openjdk:11-jdk-slim
+
+  needs:
+    - build:application
+
+  # ========================================================================
+  # SETUP BLOCK
+  # ========================================================================
+
+  before_script:
+    - echo "Setting up Veracode API Wrapper..."
+    - apt-get update && apt-get install -y curl
+
+    # Download Veracode Java API Wrapper
+    - curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+    - mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+    - ls -la VeracodeJavaAPI.jar
+
+  # ========================================================================
+  # UPLOAD BLOCK
+  # ========================================================================
+  # Upload application to Veracode Platform and initiate scan
+  # ========================================================================
+
+  script:
+    - echo "Uploading $APP_NAME version $APP_VERSION to Veracode Platform..."
+
+    - |
+      java -jar VeracodeJavaAPI.jar \
+        -vid "$VERACODE_API_ID" \
+        -vkey "$VERACODE_API_KEY" \
+        -action UploadAndScan \
+        -appname "$APP_NAME" \
+        -createprofile true \
+        -version "$APP_VERSION" \
+        -filepath "$BUILD_ARTIFACT" \
+        -autoscan true
+
+    - echo "✓ Upload completed. Scan initiated on Veracode Platform."
+    - echo "Application: $APP_NAME"
+    - echo "Version: $APP_VERSION"
+    - echo "Monitor progress at: https://analysiscenter.veracode.com"
+
+  # Store API wrapper for later stages
+  artifacts:
+    paths:
+      - VeracodeJavaAPI.jar
+    expire_in: 2 hours
+
+  only:
+    - main
+    - /^release\/.*$/
+    - tags
+
+# ============================================================================
+# WAIT FOR SCAN COMPLETION STAGE
+# ============================================================================
+
+veracode:wait-for-scan:
+  stage: verify
+  image: openjdk:11-jdk-slim
+
+  needs:
+    - veracode:upload
+
+  # ========================================================================
+  # WAIT BLOCK
+  # ========================================================================
+  # Poll Veracode Platform until scan completes or times out
+  # ========================================================================
+
+  script:
+    - echo "Waiting for scan to complete (timeout: $SCAN_TIMEOUT_MINUTES minutes)..."
+    - apt-get update && apt-get install -y bc
+
+    - START_TIME=$(date +%s)
+    - TIMEOUT_SECONDS=$((SCAN_TIMEOUT_MINUTES * 60))
+
+    - |
+      while true; do
+        # Get current scan status
+        STATUS=$(java -jar VeracodeJavaAPI.jar \
+          -vid "$VERACODE_API_ID" \
+          -vkey "$VERACODE_API_KEY" \
+          -action GetBuildInfo \
+          -appname "$APP_NAME" \
+          -version "$APP_VERSION" | \
+          grep "status=" | cut -d'"' -f2 || echo "Unknown")
+
+        echo "Current scan status: $STATUS"
+
+        # Check if scan is complete
+        if [[ "$STATUS" == "Results Ready" ]]; then
+          echo "✓ Scan completed successfully"
+          break
+        elif [[ "$STATUS" == "Scan Failed" ]] || [[ "$STATUS" == "Incomplete" ]]; then
+          echo "✗ Scan failed or incomplete"
+          exit 1
+        fi
+
+        # Check timeout
+        CURRENT_TIME=$(date +%s)
+        ELAPSED=$((CURRENT_TIME - START_TIME))
+
+        if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+          echo "✗ Scan timeout after $SCAN_TIMEOUT_MINUTES minutes"
+          echo "Check scan status in Veracode Platform"
+          exit 1
+        fi
+
+        # Progress indicator
+        MINUTES_ELAPSED=$((ELAPSED / 60))
+        echo "Elapsed time: $MINUTES_ELAPSED minutes / $SCAN_TIMEOUT_MINUTES minutes"
+
+        # Wait before next check
+        echo "Waiting 60 seconds before next check..."
+        sleep 60
+      done
+
+  # Pass API wrapper to next stage
+  artifacts:
+    paths:
+      - VeracodeJavaAPI.jar
+    expire_in: 1 hour
+
+  only:
+    - main
+    - /^release\/.*$/
+    - tags
+
+  # Allow manual retry
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+
+# ============================================================================
+# POLICY COMPLIANCE CHECK STAGE
+# ============================================================================
+
+veracode:check-compliance:
+  stage: report
+  image: openjdk:11-jdk-slim
+
+  needs:
+    - veracode:wait-for-scan
+
+  before_script:
+    - apt-get update && apt-get install -y libxml2-utils curl
+    - mkdir -p veracode-reports
+
+  # ========================================================================
+  # DOWNLOAD RESULTS BLOCK
+  # ========================================================================
+
+  script:
+    - echo "Downloading scan results for $APP_NAME version $APP_VERSION..."
+
+    # Download detailed XML report
+    - |
+      java -jar VeracodeJavaAPI.jar \
+        -vid "$VERACODE_API_ID" \
+        -vkey "$VERACODE_API_KEY" \
+        -action DetailedReport \
+        -appname "$APP_NAME" \
+        -version "$APP_VERSION" \
+        -outputfilepath "veracode-reports/detailed-report.xml"
+
+    # Download summary PDF report
+    - |
+      java -jar VeracodeJavaAPI.jar \
+        -vid "$VERACODE_API_ID" \
+        -vkey "$VERACODE_API_KEY" \
+        -action SummaryReport \
+        -appname "$APP_NAME" \
+        -version "$APP_VERSION" \
+        -outputfilepath "veracode-reports/summary-report.pdf"
+
+    - echo "✓ Reports downloaded successfully"
+
+    # ======================================================================
+    # PARSE RESULTS BLOCK
+    # ======================================================================
+
+    - echo "Analyzing scan results..."
+
+    # Extract policy compliance status
+    - POLICY_STATUS=$(grep -oP 'policy_compliance_status="\K[^"]+' veracode-reports/detailed-report.xml || echo "Unknown")
+    - echo "Policy Compliance Status: $POLICY_STATUS"
+
+    # Count flaws by severity
+    - VERY_HIGH=$(grep -c 'severity="5"' veracode-reports/detailed-report.xml || echo "0")
+    - HIGH=$(grep -c 'severity="4"' veracode-reports/detailed-report.xml || echo "0")
+    - MEDIUM=$(grep -c 'severity="3"' veracode-reports/detailed-report.xml || echo "0")
+    - LOW=$(grep -c 'severity="2"' veracode-reports/detailed-report.xml || echo "0")
+
+    - echo "Flaw Summary:"
+    - echo "  Very High: $VERY_HIGH"
+    - echo "  High: $HIGH"
+    - echo "  Medium: $MEDIUM"
+    - echo "  Low: $LOW"
+
+    # ======================================================================
+    # COMPLIANCE CHECK BLOCK
+    # ======================================================================
+
+    - |
+      if [[ "$POLICY_STATUS" == "Pass" ]]; then
+        echo "✓ Build passed Veracode policy compliance"
+        exit 0
+      elif [[ "$POLICY_STATUS" == "Not Assessed" ]]; then
+        echo "⚠ Policy compliance not assessed"
+        if [[ "$FAIL_ON_POLICY_VIOLATION" == "true" ]]; then
+          echo "Build failed: No policy assessment"
+          exit 1
+        fi
+      else
+        echo "✗ Build failed Veracode policy compliance"
+        echo "Review detailed-report.xml for flaw information"
+        if [[ "$FAIL_ON_POLICY_VIOLATION" == "true" ]]; then
+          exit 1
+        fi
+      fi
+
+  # ========================================================================
+  # ARTIFACTS BLOCK
+  # ========================================================================
+
+  artifacts:
+    name: "veracode-policy-scan-$CI_COMMIT_SHORT_SHA"
+    when: always
+    paths:
+      - veracode-reports/
+    reports:
+      # Optional: Convert to GitLab SAST format
+      # sast: veracode-reports/gl-sast-report.json
+    expire_in: 90 days
+
+  only:
+    - main
+    - /^release\/.*$/
+    - tags
+
+# ============================================================================
+# OPTIONAL: Merge Request Comment
+# ============================================================================
+
+# veracode:mr-comment:
+#   stage: report
+#   image: alpine:latest
+#
+#   needs:
+#     - veracode:check-compliance
+#
+#   before_script:
+#     - apk add --no-cache curl jq
+#
+#   script:
+#     - |
+#       # Extract results from artifacts
+#       POLICY_STATUS=$(grep -oP 'policy_compliance_status="\K[^"]+' veracode-reports/detailed-report.xml || echo "Unknown")
+#       VERY_HIGH=$(grep -c 'severity="5"' veracode-reports/detailed-report.xml || echo "0")
+#       HIGH=$(grep -c 'severity="4"' veracode-reports/detailed-report.xml || echo "0")
+#
+#       # Create comment
+#       COMMENT="## Veracode Policy Scan Results\n\n"
+#       COMMENT="${COMMENT}**Status**: $POLICY_STATUS\n\n"
+#       COMMENT="${COMMENT}**Flaws**:\n"
+#       COMMENT="${COMMENT}- Very High: $VERY_HIGH\n"
+#       COMMENT="${COMMENT}- High: $HIGH\n\n"
+#       COMMENT="${COMMENT}[View Full Report]($CI_PROJECT_URL/-/jobs/$CI_JOB_ID/artifacts/browse/veracode-reports/)"
+#
+#       # Post comment to MR
+#       curl --request POST \
+#         --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+#         --data "body=$COMMENT" \
+#         "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes"
+#
+#   only:
+#     - merge_requests
+
+# ============================================================================
+# OPTIONAL: Sandbox Scan (for Development Branches)
+# ============================================================================
+
+# veracode:sandbox-scan:
+#   stage: upload
+#   image: openjdk:11-jdk-slim
+#
+#   needs:
+#     - build:application
+#
+#   before_script:
+#     - apt-get update && apt-get install -y curl
+#     - curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+#     - mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+#
+#   script:
+#     - echo "Uploading to sandbox: Development"
+#
+#     - |
+#       java -jar VeracodeJavaAPI.jar \
+#         -vid "$VERACODE_API_ID" \
+#         -vkey "$VERACODE_API_KEY" \
+#         -action UploadAndScan \
+#         -appname "$APP_NAME" \
+#         -createprofile true \
+#         -version "sandbox-$APP_VERSION" \
+#         -filepath "$BUILD_ARTIFACT" \
+#         -sandboxname "Development" \
+#         -createsandbox true \
+#         -autoscan true
+#
+#   only:
+#     - develop
+#     - /^feature\/.*$/
+
+# ============================================================================
+# OPTIONAL: Download Previous Scan for Comparison
+# ============================================================================
+
+# veracode:get-baseline:
+#   stage: report
+#   image: openjdk:11-jdk-slim
+#
+#   needs:
+#     - veracode:check-compliance
+#
+#   before_script:
+#     - apt-get update && apt-get install -y curl
+#     - curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+#     - mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+#
+#   script:
+#     - echo "Downloading previous scan results for comparison..."
+#
+#     # Get list of builds
+#     - |
+#       java -jar VeracodeJavaAPI.jar \
+#         -vid "$VERACODE_API_ID" \
+#         -vkey "$VERACODE_API_KEY" \
+#         -action GetBuildList \
+#         -appname "$APP_NAME" \
+#         -outputfilepath "build-list.xml"
+#
+#     # Download previous scan report for trending
+#     - |
+#       PREVIOUS_VERSION=$(grep -oP 'build_id="\K[^"]+' build-list.xml | head -2 | tail -1)
+#       if [ -n "$PREVIOUS_VERSION" ]; then
+#         java -jar VeracodeJavaAPI.jar \
+#           -vid "$VERACODE_API_ID" \
+#           -vkey "$VERACODE_API_KEY" \
+#           -action DetailedReport \
+#           -buildid "$PREVIOUS_VERSION" \
+#           -outputfilepath "previous-scan.xml"
+#       fi
+#
+#   artifacts:
+#     paths:
+#       - previous-scan.xml
+#     expire_in: 7 days
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# UploadAndScan Parameters:
+# - appname: Application name in Veracode Platform
+# - createprofile: true/false - Create app profile if doesn't exist
+# - version: Build version/identifier
+# - filepath: Path to file(s) to upload
+# - sandboxname: Sandbox name (optional)
+# - createsandbox: true/false - Create sandbox if doesn't exist
+# - autoscan: true/false - Start scan automatically after upload
+# - criticality: VeryHigh, High, Medium, Low, VeryLow
+# - businessunit: Business unit name
+# - teams: Team names
+#
+# GetBuildInfo Status Values:
+# - Incomplete: Upload in progress
+# - Pre-Scan Submitted: Waiting for prescan
+# - Pre-Scan Success: Prescan completed
+# - Scan In Process: Static analysis running
+# - Results Ready: Scan completed
+# - Scan Failed: Error during scanning
+#
+# Policy Compliance Status:
+# - Pass: Meets all policy requirements
+# - Conditional Pass: Meets some requirements
+# - Did Not Pass: Failed policy requirements
+# - Not Assessed: No policy applied
+#
+# Report Types:
+# - DetailedReport: XML with all findings
+# - SummaryReport: PDF executive summary
+# - ThirdPartyReport: PDF with component info
+# - ComplianceReport: PDF compliance status
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Upload Failures:
+#    - Verify file size under 2GB
+#    - Check file format (JAR, WAR, ZIP, etc.)
+#    - Ensure API credentials have upload permissions
+#    - Check network connectivity to Veracode
+#
+# 2. Scan Timeout:
+#    - Increase SCAN_TIMEOUT_MINUTES for large applications
+#    - Monitor scan in Veracode Platform
+#    - Consider using async approach (don't wait in pipeline)
+#
+# 3. Policy Compliance Failures:
+#    - Review detailed-report.xml for specific flaws
+#    - Check policy configuration in Veracode Platform
+#    - Use sandboxes for development/testing
+#    - Review flaw severity and remediation guidance
+#
+# 4. Application Profile Issues:
+#    - Set createprofile=true to auto-create
+#    - Verify app name spelling (case-sensitive)
+#    - Check permissions in Veracode Platform
+#
+# 5. Version Conflicts:
+#    - Use unique version identifiers
+#    - Include pipeline ID or commit SHA
+#    - Delete old versions if needed
+#
+# 6. Runner Timeout:
+#    - GitLab runners have default timeout limits
+#    - Set longer timeout in .gitlab-ci.yml
+#    - Or use async approach (upload, then check separately)
+#
+# For more help:
+# - Veracode: https://docs.veracode.com/r/c_about_wrappers
+# - GitLab CI: https://docs.gitlab.com/ee/ci/
+# ============================================================================

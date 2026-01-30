@@ -1,0 +1,485 @@
+# ============================================================================
+# Veracode Policy Scan (Comprehensive SAST) - Bitbucket Pipelines Template
+# ============================================================================
+# This template demonstrates how to integrate Veracode Policy Scan into your
+# Bitbucket Pipelines for comprehensive Static Application Security Testing
+# and policy compliance verification.
+#
+# Policy Scan provides thorough security analysis and is used for:
+# - Release candidate validation
+# - Policy compliance reporting
+# - Detailed flaw remediation guidance
+# - Security gate checks before production
+#
+# Note: Policy Scan takes longer than Pipeline Scan (hours vs minutes)
+# but provides comprehensive results and policy enforcement.
+#
+# Prerequisites:
+# - Veracode API credentials stored in Bitbucket repository variables
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode application profile created (or auto-created)
+#
+# Usage: Copy this into your bitbucket-pipelines.yml or merge with existing
+#
+# Documentation: https://docs.veracode.com/r/About_Static_Analysis
+# ============================================================================
+
+# ============================================================================
+# GLOBAL CONFIGURATION
+# ============================================================================
+
+image: maven:3.9-eclipse-temurin-11
+
+# ============================================================================
+# DEFINITIONS
+# ============================================================================
+
+definitions:
+  caches:
+    maven: ~/.m2/repository
+
+  # ========================================================================
+  # REUSABLE STEPS
+  # ========================================================================
+
+  steps:
+    - step: &build-application
+        name: Build Application
+        script:
+          - echo "Building application..."
+          - mvn clean package -DskipTests
+          - ls -la target/
+        artifacts:
+          - target/**
+        caches:
+          - maven
+
+    - step: &upload-to-veracode
+        name: Upload to Veracode Platform
+        image: openjdk:11-jdk-slim
+
+        script:
+          # ============================================================
+          # SETUP BLOCK - Download Veracode API Wrapper
+          # ============================================================
+
+          - echo "Downloading Veracode Java API Wrapper..."
+          - apt-get update && apt-get install -y curl
+          - curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+          - mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+
+          # ============================================================
+          # UPLOAD BLOCK - Upload and Initiate Scan
+          # ============================================================
+
+          - echo "Uploading ${BITBUCKET_REPO_SLUG} to Veracode..."
+          - APP_VERSION="${BITBUCKET_BUILD_NUMBER}"
+
+          - |
+            java -jar VeracodeJavaAPI.jar \
+              -vid "$VERACODE_API_ID" \
+              -vkey "$VERACODE_API_KEY" \
+              -action UploadAndScan \
+              -appname "${BITBUCKET_REPO_SLUG}" \
+              -createprofile true \
+              -version "$APP_VERSION" \
+              -filepath "target/*.jar" \
+              -autoscan true
+
+          - echo "✓ Upload completed. Scan initiated."
+          - echo "Monitor at https://analysiscenter.veracode.com"
+
+        artifacts:
+          - VeracodeJavaAPI.jar
+
+    - step: &wait-for-scan
+        name: Wait for Scan Completion
+        image: openjdk:11-jdk-slim
+
+        script:
+          - echo "Waiting for scan to complete..."
+          - APP_VERSION="${BITBUCKET_BUILD_NUMBER}"
+          - TIMEOUT_MINUTES=60
+          - TIMEOUT_SECONDS=$((TIMEOUT_MINUTES * 60))
+          - START_TIME=$(date +%s)
+
+          # ============================================================
+          # WAIT LOOP - Poll for Scan Completion
+          # ============================================================
+
+          - |
+            while true; do
+              STATUS=$(java -jar VeracodeJavaAPI.jar \
+                -vid "$VERACODE_API_ID" \
+                -vkey "$VERACODE_API_KEY" \
+                -action GetBuildInfo \
+                -appname "${BITBUCKET_REPO_SLUG}" \
+                -version "$APP_VERSION" | \
+                grep "status=" | cut -d'"' -f2 || echo "Unknown")
+
+              echo "Current scan status: $STATUS"
+
+              if [[ "$STATUS" == "Results Ready" ]]; then
+                echo "✓ Scan completed successfully"
+                break
+              elif [[ "$STATUS" == "Scan Failed" ]] || [[ "$STATUS" == "Incomplete" ]]; then
+                echo "✗ Scan failed or incomplete"
+                exit 1
+              fi
+
+              CURRENT_TIME=$(date +%s)
+              ELAPSED=$((CURRENT_TIME - START_TIME))
+
+              if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+                echo "✗ Scan timeout after $TIMEOUT_MINUTES minutes"
+                exit 1
+              fi
+
+              MINUTES=$((ELAPSED / 60))
+              echo "Elapsed: $MINUTES / $TIMEOUT_MINUTES minutes"
+              echo "Waiting 60 seconds..."
+              sleep 60
+            done
+
+        artifacts:
+          - VeracodeJavaAPI.jar
+
+    - step: &check-policy-compliance
+        name: Check Policy Compliance
+        image: openjdk:11-jdk-slim
+
+        script:
+          - echo "Checking policy compliance..."
+          - apt-get update && apt-get install -y libxml2-utils
+          - mkdir -p veracode-reports
+          - APP_VERSION="${BITBUCKET_BUILD_NUMBER}"
+
+          # ============================================================
+          # DOWNLOAD RESULTS
+          # ============================================================
+
+          - echo "Downloading scan results..."
+
+          # Detailed XML report
+          - |
+            java -jar VeracodeJavaAPI.jar \
+              -vid "$VERACODE_API_ID" \
+              -vkey "$VERACODE_API_KEY" \
+              -action DetailedReport \
+              -appname "${BITBUCKET_REPO_SLUG}" \
+              -version "$APP_VERSION" \
+              -outputfilepath "veracode-reports/detailed-report.xml"
+
+          # Summary PDF report
+          - |
+            java -jar VeracodeJavaAPI.jar \
+              -vid "$VERACODE_API_ID" \
+              -vkey "$VERACODE_API_KEY" \
+              -action SummaryReport \
+              -appname "${BITBUCKET_REPO_SLUG}" \
+              -version "$APP_VERSION" \
+              -outputfilepath "veracode-reports/summary-report.pdf"
+
+          # ============================================================
+          # PARSE AND CHECK COMPLIANCE
+          # ============================================================
+
+          - echo "Parsing results..."
+
+          # Extract policy status
+          - POLICY_STATUS=$(grep -oP 'policy_compliance_status="\K[^"]+' veracode-reports/detailed-report.xml || echo "Unknown")
+          - echo "Policy Compliance: $POLICY_STATUS"
+
+          # Count flaws
+          - VERY_HIGH=$(grep -c 'severity="5"' veracode-reports/detailed-report.xml || echo "0")
+          - HIGH=$(grep -c 'severity="4"' veracode-reports/detailed-report.xml || echo "0")
+          - MEDIUM=$(grep -c 'severity="3"' veracode-reports/detailed-report.xml || echo "0")
+
+          - echo "Flaws - Very High:$VERY_HIGH High:$HIGH Medium:$MEDIUM"
+
+          # Check compliance
+          - |
+            if [[ "$POLICY_STATUS" == "Pass" ]]; then
+              echo "✓ Passed policy compliance"
+              exit 0
+            else
+              echo "✗ Failed policy compliance"
+              echo "Review veracode-reports/detailed-report.xml"
+              exit 1
+            fi
+
+        artifacts:
+          - veracode-reports/**
+
+    - step: &sandbox-upload
+        name: Upload to Sandbox
+        image: openjdk:11-jdk-slim
+
+        script:
+          - apt-get update && apt-get install -y curl
+          - curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+          - mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+
+          - echo "Uploading to Development sandbox..."
+          - APP_VERSION="sandbox-${BITBUCKET_BUILD_NUMBER}"
+
+          - |
+            java -jar VeracodeJavaAPI.jar \
+              -vid "$VERACODE_API_ID" \
+              -vkey "$VERACODE_API_KEY" \
+              -action UploadAndScan \
+              -appname "${BITBUCKET_REPO_SLUG}" \
+              -createprofile true \
+              -version "$APP_VERSION" \
+              -filepath "target/*.jar" \
+              -sandboxname "Development" \
+              -createsandbox true \
+              -autoscan true
+
+          - echo "✓ Sandbox scan initiated"
+
+# ============================================================================
+# PIPELINES
+# ============================================================================
+
+pipelines:
+  # ========================================================================
+  # MAIN BRANCH - Full Policy Scan
+  # ========================================================================
+
+  branches:
+    main:
+      - step: *build-application
+      - step: *upload-to-veracode
+      - step: *wait-for-scan
+      - step: *check-policy-compliance
+
+    # ======================================================================
+    # RELEASE BRANCHES - Policy Scan with Stricter Compliance
+    # ======================================================================
+
+    release/*:
+      - step: *build-application
+      - step: *upload-to-veracode
+      - step: *wait-for-scan
+      - step:
+          <<: *check-policy-compliance
+          name: Check Policy Compliance (Strict)
+
+    # ======================================================================
+    # DEVELOP BRANCH - Sandbox Scan
+    # ======================================================================
+
+    develop:
+      - step: *build-application
+      - step: *sandbox-upload
+
+  # ========================================================================
+  # TAGS - Release Validation
+  # ========================================================================
+
+  tags:
+    'v*':
+      - step: *build-application
+      - step:
+          <<: *upload-to-veracode
+          name: Upload Release Build
+      - step: *wait-for-scan
+      - step:
+          <<: *check-policy-compliance
+          name: Validate Release Compliance
+      - step:
+          name: Deploy to Production
+          deployment: production
+          trigger: manual
+          script:
+            - echo "Policy scan passed - ready for deployment"
+            - echo "Deploy your application here"
+
+  # ========================================================================
+  # CUSTOM PIPELINES
+  # ========================================================================
+
+  custom:
+    policy-scan-only:
+      - step: *build-application
+      - step: *upload-to-veracode
+      - step: *wait-for-scan
+      - step: *check-policy-compliance
+
+    sandbox-scan-only:
+      - step: *build-application
+      - step: *sandbox-upload
+
+    # ======================================================================
+    # Async Upload (don't wait for results)
+    # ======================================================================
+
+    async-upload:
+      - step: *build-application
+      - step: *upload-to-veracode
+
+# ============================================================================
+# ADVANCED EXAMPLES
+# ============================================================================
+
+# ============================================================================
+# EXAMPLE: Pipeline with Manual Approval After Scan
+# ============================================================================
+
+# pipelines:
+#   branches:
+#     main:
+#       - step: *build-application
+#       - step: *upload-to-veracode
+#       - step: *wait-for-scan
+#       - step: *check-policy-compliance
+#       - step:
+#           name: Deploy to Staging
+#           deployment: staging
+#           trigger: manual
+#           script:
+#             - echo "Deploying to staging..."
+#       - step:
+#           name: Deploy to Production
+#           deployment: production
+#           trigger: manual
+#           script:
+#             - echo "Deploying to production..."
+
+# ============================================================================
+# EXAMPLE: Parallel Scans (Policy + Sandbox)
+# ============================================================================
+
+# pipelines:
+#   branches:
+#     main:
+#       - step: *build-application
+#       - parallel:
+#         - step: *upload-to-veracode
+#         - step: *sandbox-upload
+
+# ============================================================================
+# EXAMPLE: Download and Compare with Previous Scan
+# ============================================================================
+
+# - step:
+#     name: Compare with Previous Scan
+#     image: openjdk:11-jdk-slim
+#     script:
+#       - apt-get update && apt-get install -y curl
+#       - curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+#       - mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+#
+#       # Get build list
+#       - |
+#         java -jar VeracodeJavaAPI.jar \
+#           -vid "$VERACODE_API_ID" \
+#           -vkey "$VERACODE_API_KEY" \
+#           -action GetBuildList \
+#           -appname "${BITBUCKET_REPO_SLUG}" \
+#           -outputfilepath "build-list.xml"
+#
+#       # Compare flaw counts between builds
+#       - echo "Analyzing trends..."
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# UploadAndScan Parameters:
+# - appname: Application name (default: repository slug)
+# - createprofile: true/false - Auto-create profile
+# - version: Build version identifier
+# - filepath: Path to files to upload
+# - sandboxname: Sandbox name (for testing)
+# - createsandbox: true/false - Auto-create sandbox
+# - autoscan: true/false - Start scan after upload
+# - criticality: VeryHigh, High, Medium, Low, VeryLow
+# - businessunit: Business unit name
+# - teams: Comma-separated team names
+# - scantimeout: Minutes before timeout
+#
+# Report Actions:
+# - DetailedReport: Full XML report with findings
+# - SummaryReport: Executive PDF summary
+# - ThirdPartyReport: Component analysis PDF
+# - ComplianceReport: Policy compliance PDF
+# - GetBuildInfo: Current build status
+# - GetBuildList: List of all builds for app
+#
+# Build Status Values:
+# - Incomplete: Upload in progress
+# - Pre-Scan Submitted: Waiting for prescan
+# - Pre-Scan Success: Prescan completed
+# - Scan In Process: Analysis running
+# - Results Ready: Scan complete
+# - Scan Failed: Error occurred
+#
+# Policy Compliance Values:
+# - Pass: Meets policy requirements
+# - Conditional Pass: Partial compliance
+# - Did Not Pass: Failed policy
+# - Not Assessed: No policy applied
+#
+# Bitbucket Variables:
+# - BITBUCKET_REPO_SLUG: Repository name
+# - BITBUCKET_BRANCH: Current branch
+# - BITBUCKET_COMMIT: Current commit SHA
+# - BITBUCKET_BUILD_NUMBER: Build number
+# - BITBUCKET_TAG: Tag name (if applicable)
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Upload Failures:
+#    - Verify file size under 2GB per file
+#    - Check supported formats (JAR, WAR, ZIP, etc.)
+#    - Ensure credentials have upload permissions
+#    - Check network connectivity
+#
+# 2. Pipeline Timeout:
+#    - Bitbucket has 2-hour max timeout per step
+#    - For longer scans, use async upload (don't wait)
+#    - Check scan status in Veracode Platform
+#    - Consider separate pipeline to check results
+#
+# 3. Scan Failures:
+#    - Review prescan logs in Veracode Platform
+#    - Check file dependencies and modules
+#    - Verify compilation success
+#    - Ensure all required files are uploaded
+#
+# 4. Policy Compliance:
+#    - Review detailed-report.xml for flaws
+#    - Check policy configuration in Platform
+#    - Use sandboxes for development testing
+#    - Review flaw remediation guidance
+#
+# 5. Application Profile:
+#    - Set createprofile=true for auto-creation
+#    - Verify app name (case-sensitive)
+#    - Check permissions in Veracode Platform
+#    - Ensure business unit access
+#
+# 6. Memory Issues:
+#    - Large artifacts may need more memory
+#    - Use pipe options if available
+#    - Split large uploads if possible
+#    - Contact Bitbucket support for limits
+#
+# 7. Artifact Size:
+#    - Bitbucket limits artifact storage
+#    - Clean up old artifacts
+#    - Use shorter retention periods
+#    - Store reports externally if needed
+#
+# For more help:
+# - Veracode: https://docs.veracode.com/r/c_about_wrappers
+# - Bitbucket: https://support.atlassian.com/bitbucket-cloud/docs/
+# ============================================================================

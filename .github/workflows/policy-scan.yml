@@ -1,0 +1,509 @@
+# ============================================================================
+# Veracode Policy Scan (Comprehensive SAST) - GitHub Actions Workflow
+# ============================================================================
+# This workflow demonstrates how to integrate Veracode Policy Scan into your
+# GitHub Actions pipeline for comprehensive Static Application Security Testing
+# and policy compliance verification.
+#
+# Policy Scan provides thorough security analysis and is used for:
+# - Release candidate validation
+# - Policy compliance reporting
+# - Detailed flaw remediation guidance
+# - Security gate checks before production
+#
+# Note: Policy Scan takes longer than Pipeline Scan (hours vs minutes)
+# but provides comprehensive results and policy enforcement.
+#
+# Prerequisites:
+# - Veracode API credentials stored in GitHub Secrets
+# - Application compiled/packaged (JAR, WAR, ZIP, etc.)
+# - Veracode application profile created (or auto-created)
+#
+# Documentation: https://docs.veracode.com/r/About_Static_Analysis
+# ============================================================================
+
+name: Veracode Policy Scan
+
+# ============================================================================
+# TRIGGER CONFIGURATION
+# ============================================================================
+
+on:
+  # Run on main branch and release branches
+  push:
+    branches:
+      - main
+      - release/**
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+  # Run on release tags
+  release:
+    types: [published]
+
+  # Manual trigger with options
+  workflow_dispatch:
+    inputs:
+      scan_timeout:
+        description: 'Scan timeout in minutes'
+        required: false
+        default: '60'
+      fail_on_policy:
+        description: 'Fail build on policy failure'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+# ============================================================================
+# ENVIRONMENT VARIABLES
+# ============================================================================
+
+env:
+  APP_NAME: 'my-application'
+  JAVA_VERSION: '11'
+
+jobs:
+  # ==========================================================================
+  # BUILD JOB
+  # ==========================================================================
+
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ====================================================================
+      # BUILD BLOCK
+      # ====================================================================
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: 'maven'
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      # ====================================================================
+      # ARTIFACT UPLOAD
+      # ====================================================================
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: target/*.jar
+          retention-days: 1
+
+  # ==========================================================================
+  # UPLOAD AND SCAN JOB
+  # ==========================================================================
+
+  upload-and-scan:
+    name: Upload to Veracode
+    runs-on: ubuntu-latest
+    needs: build
+
+    outputs:
+      scan-id: ${{ steps.upload.outputs.scan-id }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+          path: ./scan-target
+
+      # ====================================================================
+      # METHOD 1: Using Official Veracode GitHub Action (Recommended)
+      # ====================================================================
+
+      - name: Veracode Upload And Scan
+        id: upload
+        uses: veracode/veracode-uploadandscan-action@0.2.6
+        with:
+          appname: ${{ env.APP_NAME }}
+          createprofile: true
+          version: '${{ github.run_number }}-${{ github.run_attempt }}'
+          filepath: './scan-target/'
+          vid: ${{ secrets.VERACODE_API_ID }}
+          vkey: ${{ secrets.VERACODE_API_KEY }}
+          # Optional parameters:
+          # createsandbox: true
+          # sandboxname: 'Development'
+          # scantimeout: 60
+          # criticality: 'High'
+
+  # ==========================================================================
+  # ALTERNATIVE: Manual Upload Using API Wrapper
+  # ==========================================================================
+
+  # upload-and-scan-manual:
+  #   name: Upload to Veracode (Manual)
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #
+  #   steps:
+  #     - name: Download build artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: build-artifact
+  #         path: ./scan-target
+  #
+  #     # ================================================================
+  #     # SETUP BLOCK - Download Veracode API Wrapper
+  #     # ================================================================
+  #
+  #     - name: Set up JDK for API Wrapper
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: 'temurin'
+  #         java-version: '11'
+  #
+  #     - name: Download Veracode API Wrapper
+  #       run: |
+  #         echo "Downloading Veracode API Wrapper..."
+  #         curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+  #         mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+  #
+  #     # ================================================================
+  #     # UPLOAD BLOCK - Upload Application
+  #     # ================================================================
+  #
+  #     - name: Upload to Veracode
+  #       run: |
+  #         echo "Uploading ${{ env.APP_NAME }} to Veracode..."
+  #
+  #         java -jar VeracodeJavaAPI.jar \
+  #           -vid "${{ secrets.VERACODE_API_ID }}" \
+  #           -vkey "${{ secrets.VERACODE_API_KEY }}" \
+  #           -action UploadAndScan \
+  #           -appname "${{ env.APP_NAME }}" \
+  #           -createprofile true \
+  #           -version "${{ github.run_number }}" \
+  #           -filepath "./scan-target/*.jar" \
+  #           -autoscan true
+  #
+  #         echo "Upload completed. Scan initiated."
+  #
+  #     # ================================================================
+  #     # WAIT BLOCK - Wait for Scan Completion
+  #     # ================================================================
+  #
+  #     - name: Wait for Scan Completion
+  #       run: |
+  #         echo "Waiting for scan to complete..."
+  #
+  #         TIMEOUT_MINUTES=${{ github.event.inputs.scan_timeout || '60' }}
+  #         TIMEOUT_SECONDS=$((TIMEOUT_MINUTES * 60))
+  #         START_TIME=$(date +%s)
+  #
+  #         while true; do
+  #           # Get scan status
+  #           STATUS=$(java -jar VeracodeJavaAPI.jar \
+  #             -vid "${{ secrets.VERACODE_API_ID }}" \
+  #             -vkey "${{ secrets.VERACODE_API_KEY }}" \
+  #             -action GetBuildInfo \
+  #             -appname "${{ env.APP_NAME }}" \
+  #             -version "${{ github.run_number }}" | \
+  #             grep "status=" | cut -d'"' -f2)
+  #
+  #           echo "Current scan status: $STATUS"
+  #
+  #           if [[ "$STATUS" == "Results Ready" ]]; then
+  #             echo "✓ Scan completed successfully"
+  #             break
+  #           elif [[ "$STATUS" == "Scan Failed" ]] || [[ "$STATUS" == "Incomplete" ]]; then
+  #             echo "✗ Scan failed or incomplete"
+  #             exit 1
+  #           fi
+  #
+  #           # Check timeout
+  #           CURRENT_TIME=$(date +%s)
+  #           ELAPSED=$((CURRENT_TIME - START_TIME))
+  #           if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+  #             echo "✗ Scan timeout after $TIMEOUT_MINUTES minutes"
+  #             exit 1
+  #           fi
+  #
+  #           echo "Waiting 60 seconds before next check..."
+  #           sleep 60
+  #         done
+
+  # ==========================================================================
+  # CHECK POLICY COMPLIANCE JOB
+  # ==========================================================================
+
+  check-compliance:
+    name: Check Policy Compliance
+    runs-on: ubuntu-latest
+    needs: upload-and-scan
+    if: always()
+
+    steps:
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Download Veracode API Wrapper
+        run: |
+          curl -sSO https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.8.12.0/vosp-api-wrappers-java-23.8.12.0.jar
+          mv vosp-api-wrappers-java-23.8.12.0.jar VeracodeJavaAPI.jar
+
+      # ====================================================================
+      # RESULTS DOWNLOAD BLOCK
+      # ====================================================================
+
+      - name: Download Scan Results
+        run: |
+          echo "Downloading scan results for ${{ env.APP_NAME }}..."
+
+          # Detailed XML report with all findings
+          java -jar VeracodeJavaAPI.jar \
+            -vid "${{ secrets.VERACODE_API_ID }}" \
+            -vkey "${{ secrets.VERACODE_API_KEY }}" \
+            -action DetailedReport \
+            -appname "${{ env.APP_NAME }}" \
+            -version "${{ github.run_number }}-${{ github.run_attempt }}" \
+            -outputfilepath "detailed-report.xml"
+
+          # Summary PDF report
+          java -jar VeracodeJavaAPI.jar \
+            -vid "${{ secrets.VERACODE_API_ID }}" \
+            -vkey "${{ secrets.VERACODE_API_KEY }}" \
+            -action SummaryReport \
+            -appname "${{ env.APP_NAME }}" \
+            -version "${{ github.run_number }}-${{ github.run_attempt }}" \
+            -outputfilepath "summary-report.pdf"
+
+          echo "Reports downloaded successfully"
+
+      # ====================================================================
+      # POLICY COMPLIANCE CHECK BLOCK
+      # ====================================================================
+
+      - name: Check Policy Compliance
+        id: compliance-check
+        run: |
+          echo "Checking policy compliance..."
+
+          # Extract policy compliance status from detailed report
+          POLICY_STATUS=$(grep -oP 'policy_compliance_status="\K[^"]+' detailed-report.xml || echo "Unknown")
+
+          echo "Policy Compliance Status: $POLICY_STATUS"
+          echo "policy-status=$POLICY_STATUS" >> $GITHUB_OUTPUT
+
+          # Extract flaw counts
+          VERY_HIGH=$(grep -oP 'severity="5"' detailed-report.xml | wc -l)
+          HIGH=$(grep -oP 'severity="4"' detailed-report.xml | wc -l)
+          MEDIUM=$(grep -oP 'severity="3"' detailed-report.xml | wc -l)
+
+          echo "Flaw Summary:"
+          echo "- Very High: $VERY_HIGH"
+          echo "- High: $HIGH"
+          echo "- Medium: $MEDIUM"
+
+          # Set outputs
+          echo "very-high=$VERY_HIGH" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "medium=$MEDIUM" >> $GITHUB_OUTPUT
+
+          # Determine if build should fail
+          FAIL_BUILD="${{ github.event.inputs.fail_on_policy || 'true' }}"
+
+          if [[ "$POLICY_STATUS" == "Pass" ]]; then
+            echo "✓ Build passed policy compliance"
+            exit 0
+          elif [[ "$POLICY_STATUS" == "Not Assessed" ]]; then
+            echo "⚠ Policy compliance not assessed"
+            if [[ "$FAIL_BUILD" == "true" ]]; then
+              exit 1
+            fi
+          else
+            echo "✗ Build failed policy compliance"
+            if [[ "$FAIL_BUILD" == "true" ]]; then
+              exit 1
+            fi
+          fi
+
+      # ====================================================================
+      # RESULTS UPLOAD BLOCK
+      # ====================================================================
+
+      - name: Upload Scan Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-policy-scan-results
+          path: |
+            detailed-report.xml
+            summary-report.pdf
+          retention-days: 90
+
+      # ====================================================================
+      # OPTIONAL: Create GitHub Issue for Policy Failures
+      # ====================================================================
+
+      - name: Create Issue for Policy Failure
+        if: failure() && steps.compliance-check.outputs.policy-status != 'Pass'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const veryHigh = '${{ steps.compliance-check.outputs.very-high }}';
+            const high = '${{ steps.compliance-check.outputs.high }}';
+            const medium = '${{ steps.compliance-check.outputs.medium }}';
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔴 Veracode Policy Scan Failed - Build #${{ github.run_number }}',
+              body: `## Veracode Policy Scan Results
+
+            **Status**: ❌ Policy Compliance Failed
+
+            **Build**: #${{ github.run_number }}
+            **Branch**: ${{ github.ref_name }}
+            **Commit**: ${{ github.sha }}
+
+            ### Flaw Summary
+
+            - 🔴 **Very High**: ${veryHigh}
+            - 🟠 **High**: ${high}
+            - 🟡 **Medium**: ${medium}
+
+            ### Actions Required
+
+            1. Review the [detailed scan results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            2. Download the detailed-report.xml for flaw details
+            3. Remediate critical and high severity flaws
+            4. Re-run the scan after fixes
+
+            ### Resources
+
+            - [Veracode Platform](${{ env.VERACODE_PLATFORM_URL || 'https://analysiscenter.veracode.com' }})
+            - [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `,
+              labels: ['security', 'veracode', 'policy-failure']
+            });
+
+            console.log('Created issue #' + issue.data.number);
+
+  # ==========================================================================
+  # SANDBOX SCAN EXAMPLE
+  # ==========================================================================
+
+  # sandbox-scan:
+  #   name: Sandbox Scan (Development)
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #   if: github.ref != 'refs/heads/main'
+  #
+  #   steps:
+  #     - name: Download build artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: build-artifact
+  #         path: ./scan-target
+  #
+  #     - name: Veracode Sandbox Scan
+  #       uses: veracode/veracode-uploadandscan-action@0.2.6
+  #       with:
+  #         appname: ${{ env.APP_NAME }}
+  #         createprofile: true
+  #         version: 'sandbox-${{ github.run_number }}'
+  #         filepath: './scan-target/'
+  #         vid: ${{ secrets.VERACODE_API_ID }}
+  #         vkey: ${{ secrets.VERACODE_API_KEY }}
+  #         createsandbox: true
+  #         sandboxname: 'Development'
+
+# ============================================================================
+# CONFIGURATION OPTIONS
+# ============================================================================
+#
+# veracode-uploadandscan-action Parameters:
+# - appname: Application name in Veracode Platform
+# - createprofile: true/false - Create app profile if doesn't exist
+# - version: Build version/identifier
+# - filepath: Path to file(s) to upload
+# - vid: Veracode API ID (from secrets)
+# - vkey: Veracode API Key (from secrets)
+# - sandboxname: Sandbox name (optional)
+# - createsandbox: true/false - Create sandbox if doesn't exist
+# - scantimeout: Minutes to wait for scan (default: 0 = don't wait)
+# - include: Additional files to include (optional)
+# - criticality: VeryHigh, High, Medium, Low, VeryLow
+#
+# Java API Wrapper Actions:
+# - UploadAndScan: Upload and start scan
+# - GetBuildInfo: Get scan status
+# - DetailedReport: Download XML detailed report
+# - SummaryReport: Download PDF summary
+# - ThirdPartyReport: Download third-party component report
+# - ComplianceReport: Download compliance report
+#
+# Policy Compliance Status Values:
+# - Pass: Meets policy requirements
+# - Conditional Pass: Meets some requirements
+# - Did Not Pass: Failed policy requirements
+# - Not Assessed: No policy applied
+#
+# Severity Levels:
+# - 5: Very High
+# - 4: High
+# - 3: Medium
+# - 2: Low
+# - 1: Very Low
+# - 0: Informational
+#
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+#
+# Common Issues:
+#
+# 1. Upload Failures:
+#    - Verify file size under 2GB
+#    - Check supported file formats (JAR, WAR, ZIP, etc.)
+#    - Ensure API credentials have upload permissions
+#    - Review application profile settings
+#
+# 2. Action Timeout:
+#    - Policy Scan can take hours for large applications
+#    - Set scantimeout: 0 to not wait in the action
+#    - Use separate job to check results later
+#    - Monitor progress in Veracode Platform
+#
+# 3. Policy Compliance Issues:
+#    - Review policy settings in Veracode Platform
+#    - Check severity thresholds
+#    - Consider using sandboxes for development
+#    - Review detailed-report.xml for specific flaws
+#
+# 4. Application Profile Not Found:
+#    - Set createprofile: true
+#    - Verify app name spelling (case-sensitive)
+#    - Check platform permissions
+#
+# 5. Version Already Exists:
+#    - Use unique version identifiers
+#    - Include run_number and run_attempt
+#    - Delete old versions or use new version string
+#
+# For more help:
+# - Veracode Docs: https://docs.veracode.com/r/c_about_wrappers
+# - GitHub Action: https://github.com/veracode/veracode-uploadandscan-action
+# ============================================================================
