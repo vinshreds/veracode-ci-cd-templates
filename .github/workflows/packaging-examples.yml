@@ -1,0 +1,594 @@
+# ============================================================================
+# Veracode Packaging Examples - GitHub Actions Workflow
+# ============================================================================
+# This workflow demonstrates the Veracode CLI package command for automating
+# application packaging before Static Analysis scans.
+#
+# The veracode package command:
+# - Auto-detects build tools and dependencies
+# - Compiles code into scannable artifacts
+# - Packages into proper archive format
+# - Validates artifact completeness
+#
+# Use Cases:
+# - Upload and Scan (Policy Scan)
+# - Pipeline Scan
+# - NOT for SCA Agent-based Scan (use SCA Agent directly)
+#
+# Prerequisites:
+# - Veracode API credentials in GitHub Secrets (VERACODE_API_ID, VERACODE_API_KEY)
+# - Source code with build configuration
+# - Build tools available in runner
+#
+# Documentation:
+# - Package Command: https://docs.veracode.com/r/veracode_package
+# - Autopackaging: https://docs.veracode.com/r/About_auto_packaging
+# ============================================================================
+
+name: Veracode Packaging Examples
+
+on:
+  workflow_dispatch:
+    inputs:
+      language:
+        description: 'Language to package'
+        required: true
+        type: choice
+        options:
+          - java-maven
+          - dotnet
+          - nodejs
+          - python
+          - go
+          - git-repository
+          - all-examples
+
+env:
+  APP_NAME: 'my-application'
+  ARTIFACTS_DIR: './veracode-artifacts'
+
+jobs:
+  # ==========================================================================
+  # PACKAGE DISCOVERY
+  # ==========================================================================
+
+  discovery:
+    name: Detect Build Configuration
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Veracode CLI
+        run: |
+          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          export PATH="$HOME/.veracode-cli:$PATH"
+          veracode --version
+
+      - name: Run Package Discover
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          echo "Discovering build configuration..."
+
+          # Discover toolchains (supports MSBuild and Maven)
+          veracode package discover \
+            --source . \
+            --verbose
+
+          # Show generated veracode.yml
+          if [ -f veracode.yml ]; then
+            echo "Generated veracode.yml:"
+            cat veracode.yml
+          else
+            echo "No veracode.yml generated (not MSBuild or Maven project)"
+          fi
+
+      - name: Upload veracode.yml
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-config
+          path: veracode.yml
+          if-no-files-found: ignore
+
+  # ==========================================================================
+  # JAVA (MAVEN) PACKAGING
+  # ==========================================================================
+
+  package-java-maven:
+    name: Package Java (Maven)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'java-maven' || github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Install Veracode CLI
+        run: |
+          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+      - name: Package with Default Maven Goals
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          echo "Packaging Maven project..."
+
+          veracode package \
+            --source . \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose
+
+          echo "✓ Packaging complete"
+          ls -lh "$ARTIFACTS_DIR"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-maven-package
+          path: ${{ env.ARTIFACTS_DIR }}
+          retention-days: 30
+
+  package-java-maven-custom:
+    name: Package Java (Maven Custom)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'java-maven' || github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Package with Custom Maven Command
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          # Set custom Maven arguments
+          export SRCCLR_CUSTOM_MAVEN_COMMAND="clean install -DskipTests -P production"
+
+          echo "Using custom Maven command: $SRCCLR_CUSTOM_MAVEN_COMMAND"
+
+          veracode package \
+            --source . \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose
+
+          ls -lh "$ARTIFACTS_DIR"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-maven-custom-package
+          path: ${{ env.ARTIFACTS_DIR }}
+
+  # ==========================================================================
+  # .NET PACKAGING
+  # ==========================================================================
+
+  package-dotnet:
+    name: Package .NET Application
+    runs-on: windows-latest  # Use Windows for MSBuild
+    if: github.event.inputs.language == 'dotnet' || github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Veracode CLI
+        run: |
+          Invoke-WebRequest -Uri "https://tools.veracode.com/veracode-cli/install" -OutFile install.ps1
+          .\install.ps1
+          $env:PATH += ";$env:USERPROFILE\.veracode-cli"
+          veracode --version
+
+      - name: Discover .NET Projects
+        run: |
+          $env:PATH += ";$env:USERPROFILE\.veracode-cli"
+
+          Write-Host "Discovering .NET build configuration..."
+
+          veracode package discover `
+            --source . `
+            --verbose
+
+      - name: Package .NET Application
+        run: |
+          $env:PATH += ";$env:USERPROFILE\.veracode-cli"
+
+          # Create output directory
+          New-Item -ItemType Directory -Force -Path "$env:ARTIFACTS_DIR"
+
+          # Set build configuration
+          $env:SRCCLR_MSVC_CONFIGURATION = "Release"
+          $env:SRCCLR_MSVC_PLATFORM = "x64"
+
+          Write-Host "Packaging .NET application..."
+          Write-Host "Configuration: $env:SRCCLR_MSVC_CONFIGURATION"
+          Write-Host "Platform: $env:SRCCLR_MSVC_PLATFORM"
+
+          veracode package `
+            --source . `
+            --output "$env:ARTIFACTS_DIR" `
+            --trust `
+            --verbose
+
+          Get-ChildItem -Path "$env:ARTIFACTS_DIR"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-dotnet-package
+          path: ${{ env.ARTIFACTS_DIR }}
+
+  # ==========================================================================
+  # NODE.JS PACKAGING
+  # ==========================================================================
+
+  package-nodejs:
+    name: Package Node.js Application
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'nodejs' || github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Package Node.js Application
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          echo "Packaging Node.js application..."
+
+          veracode package \
+            --source . \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose
+
+          ls -lh "$ARTIFACTS_DIR"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-nodejs-package
+          path: ${{ env.ARTIFACTS_DIR }}
+
+  # ==========================================================================
+  # PYTHON PACKAGING
+  # ==========================================================================
+
+  package-python:
+    name: Package Python Application
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'python' || github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Package Python Application
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          echo "Packaging Python application..."
+          echo "Note: Projects without package manager will generate 'no-pm' artifact"
+
+          veracode package \
+            --source . \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose
+
+          ls -lh "$ARTIFACTS_DIR"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-python-package
+          path: ${{ env.ARTIFACTS_DIR }}
+
+  # ==========================================================================
+  # GO PACKAGING
+  # ==========================================================================
+
+  package-go:
+    name: Package Go Application
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'go' || github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Package Go Application
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          # Enable CGO code generation if needed
+          export VERACODE_PACKAGE_GOLANG_GENERATE=true
+
+          echo "Packaging Go application..."
+          echo "CGO generation: $VERACODE_PACKAGE_GOLANG_GENERATE"
+          echo "Note: Nested Go modules are excluded from packaging"
+
+          veracode package \
+            --source . \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose
+
+          ls -lh "$ARTIFACTS_DIR"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-go-package
+          path: ${{ env.ARTIFACTS_DIR }}
+
+  # ==========================================================================
+  # GIT REPOSITORY PACKAGING
+  # ==========================================================================
+
+  package-repository:
+    name: Package from Git Repository
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'git-repository' || github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Package from GitHub Repository
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          echo "Packaging from GitHub repository..."
+          echo "This will clone, build, and package the repository"
+
+          # Package from public repository
+          veracode package \
+            --source https://github.com/veracode/verademo \
+            --type repo \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose
+
+          echo "✓ Repository packaged successfully"
+          ls -lh "$ARTIFACTS_DIR"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-repo-package
+          path: ${{ env.ARTIFACTS_DIR }}
+
+  # ==========================================================================
+  # COMPLETE WORKFLOW: PACKAGE + UPLOAD
+  # ==========================================================================
+
+  package-and-upload:
+    name: Complete Package + Upload Workflow
+    runs-on: ubuntu-latest
+    if: github.event.inputs.language == 'all-examples'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Install CLI
+        run: |
+          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          export PATH="$HOME/.veracode-cli:$PATH"
+          veracode --version
+
+      - name: Package Application
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          echo "Step 1: Packaging application..."
+
+          veracode package \
+            --source . \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose \
+            --strict  # Exit code 4 on build failures
+
+          echo "✓ Packaging complete"
+          ls -lh "$ARTIFACTS_DIR"
+
+      - name: Upload for Policy Scan
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          echo "Step 2: Uploading to Veracode for Policy Scan..."
+
+          # Find the packaged artifact
+          ARTIFACT=$(find "$ARTIFACTS_DIR" -name "*.zip" -o -name "*.jar" | head -1)
+
+          if [ -z "$ARTIFACT" ]; then
+            echo "❌ No artifact found in $ARTIFACTS_DIR"
+            exit 1
+          fi
+
+          echo "Found artifact: $ARTIFACT"
+
+          # Upload using veracode static scan
+          veracode static scan \
+            --source "$ARTIFACT" \
+            --app "$APP_NAME" \
+            --create-app \
+            --sandbox-name "GitHub-Actions-${{ github.run_number }}" \
+            --results-file results.json
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+      - name: Alternative - Pipeline Scan
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+
+          echo "Alternative: Running Pipeline Scan..."
+
+          ARTIFACT=$(find "$ARTIFACTS_DIR" -name "*.zip" -o -name "*.jar" | head -1)
+
+          # Run Pipeline Scan for fast feedback
+          veracode static pipeline-scan \
+            --file "$ARTIFACT" \
+            --fail-on-severity "Very High,High" \
+            --json-output-file pipeline-results.json
+        env:
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+
+      - name: Upload All Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-complete-workflow
+          path: |
+            ${{ env.ARTIFACTS_DIR }}
+            results.json
+            pipeline-results.json
+
+  # ==========================================================================
+  # TROUBLESHOOTING
+  # ==========================================================================
+
+  troubleshooting:
+    name: Debug Packaging Issues
+    runs-on: ubuntu-latest
+    if: false  # Disabled by default
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CLI
+        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+      - name: Verbose Packaging with Error Handling
+        run: |
+          export PATH="$HOME/.veracode-cli:$PATH"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          echo "Running package with verbose output and error handling..."
+
+          set -e  # Exit on error
+
+          veracode package \
+            --source . \
+            --output "$ARTIFACTS_DIR" \
+            --trust \
+            --verbose \
+            --strict || {
+              EXIT_CODE=$?
+              echo "❌ Packaging failed with exit code: $EXIT_CODE"
+
+              if [ $EXIT_CODE -eq 4 ]; then
+                echo "Build failure detected (exit code 4)"
+              fi
+
+              exit $EXIT_CODE
+            }
+
+          echo "✓ Packaging succeeded"
+
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+#
+# Package Command Flags:
+# --source (-s)     : Source location (required)
+# --trust (-a)      : Acknowledge source is trustworthy (required first use)
+# --output (-o)     : Output directory (default: current directory)
+# --type (-t)       : Source type: directory or repo (default: directory)
+# --verbose (-v)    : Show detailed output
+# --strict          : Return exit code 4 on build failures
+# --help (-h)       : Show help
+#
+# Environment Variables:
+# SRCCLR_CUSTOM_MAVEN_COMMAND    : Custom Maven arguments
+# VERACODE_PACKAGE_GOLANG_GENERATE : Enable Go CGO generation
+# SRCCLR_MSVC_CONFIGURATION      : .NET build configuration
+# SRCCLR_MSVC_PLATFORM           : .NET platform (x64, x86, ARM64)
+# SRCCLR_IOS_SCHEME              : iOS build scheme
+# SRCCLR_IOS_DESTINATION         : iOS platform
+# SRCCLR_MAKE_TARGETS            : Make targets
+# SRCCLR_MAKE_JOBS               : Make parallel jobs
+#
+# Supported Languages (25+):
+# Java, .NET, JavaScript, TypeScript, Python, Go, iOS, Android, C/C++, and more
+#
+# Limitations:
+# - SCA Agent-based Scan NOT supported
+# - Discover only supports MSBuild and Maven
+# - Repository packaging uses temporary clone
+# - Archives must not be password-protected
+#
+# Documentation:
+# - https://docs.veracode.com/r/veracode_package
+# - https://docs.veracode.com/r/About_auto_packaging
+# ============================================================================

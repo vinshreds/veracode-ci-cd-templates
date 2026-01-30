@@ -1,0 +1,624 @@
+# ============================================================================
+# Veracode Packaging Examples - Azure Pipelines Template
+# ============================================================================
+# This template demonstrates the Veracode CLI package command for automating
+# application packaging before Static Analysis scans.
+#
+# The veracode package command:
+# - Auto-detects build tools and dependencies
+# - Compiles code into scannable artifacts
+# - Packages into proper archive format
+# - Validates artifact completeness
+#
+# Use Cases:
+# - Upload and Scan (Policy Scan)
+# - Pipeline Scan
+# - NOT for SCA Agent-based Scan (use SCA Agent directly)
+#
+# Prerequisites:
+# - Veracode API credentials (for upload)
+# - Source code with build configuration
+# - Build tools installed (Maven, MSBuild, etc.)
+#
+# Documentation:
+# - Package Command: https://docs.veracode.com/r/veracode_package
+# - Autopackaging: https://docs.veracode.com/r/About_auto_packaging
+# ============================================================================
+
+trigger: none  # Manual trigger for examples
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# ============================================================================
+# VARIABLES
+# ============================================================================
+
+variables:
+  VERACODE_API_ID: $(veracode-api-id)
+  VERACODE_API_KEY: $(veracode-api-key)
+  APP_NAME: 'my-application'
+  ARTIFACTS_DIR: '$(Build.ArtifactStagingDirectory)/veracode-artifacts'
+
+# ============================================================================
+# STAGES
+# ============================================================================
+
+stages:
+  # ==========================================================================
+  # STAGE 1: PACKAGE DISCOVERY
+  # ==========================================================================
+
+  - stage: Discovery
+    displayName: 'Detect Build Configuration'
+    jobs:
+      - job: PackageDiscover
+        displayName: 'Run veracode package discover'
+        steps:
+          - task: Bash@3
+            displayName: 'Install Veracode CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+                veracode --version
+
+          - task: Bash@3
+            displayName: 'Discover Toolchains'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Discovering build configuration..."
+
+                # Run package discover (supports MSBuild and Maven)
+                veracode package discover \
+                  --source "$(Build.SourcesDirectory)" \
+                  --verbose
+
+                # Show generated veracode.yml
+                if [ -f veracode.yml ]; then
+                  echo "Generated veracode.yml:"
+                  cat veracode.yml
+                else
+                  echo "No veracode.yml generated (not MSBuild or Maven project)"
+                fi
+
+          - task: PublishPipelineArtifact@1
+            condition: eq(variables['Agent.JobStatus'], 'Succeeded')
+            displayName: 'Publish veracode.yml'
+            inputs:
+              targetPath: 'veracode.yml'
+              artifact: 'veracode-config'
+
+  # ==========================================================================
+  # STAGE 2: JAVA (MAVEN) PACKAGING
+  # ==========================================================================
+
+  - stage: PackageJavaMaven
+    displayName: 'Package Java (Maven) Application'
+    jobs:
+      - job: MavenPackage
+        displayName: 'Maven Auto-Packaging'
+        steps:
+          - task: Bash@3
+            displayName: 'Install Dependencies'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+          - task: Bash@3
+            displayName: 'Package with Default Maven Goals'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                echo "Packaging Maven project..."
+
+                veracode package \
+                  --source "$(Build.SourcesDirectory)" \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose
+
+                echo "✓ Packaging complete"
+                ls -lh "$(ARTIFACTS_DIR)"
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Artifacts'
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-maven-package'
+
+      - job: MavenCustom
+        displayName: 'Maven Custom Build Configuration'
+        steps:
+          - task: Bash@3
+            displayName: 'Install CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+          - task: Bash@3
+            displayName: 'Package with Custom Maven Arguments'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                # Set custom Maven command
+                export SRCCLR_CUSTOM_MAVEN_COMMAND="clean install -DskipTests -P production"
+
+                echo "Using custom Maven command: $SRCCLR_CUSTOM_MAVEN_COMMAND"
+
+                veracode package \
+                  --source "$(Build.SourcesDirectory)" \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose
+
+                ls -lh "$(ARTIFACTS_DIR)"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-maven-custom-package'
+
+  # ==========================================================================
+  # STAGE 3: .NET PACKAGING
+  # ==========================================================================
+
+  - stage: PackageDotNet
+    displayName: 'Package .NET Application'
+    jobs:
+      - job: DotNetPackage
+        displayName: '.NET MSBuild Packaging'
+        pool:
+          vmImage: 'windows-latest'  # Use Windows for MSBuild
+        steps:
+          - task: PowerShell@2
+            displayName: 'Install Veracode CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Download CLI installer
+                Invoke-WebRequest -Uri "https://tools.veracode.com/veracode-cli/install" -OutFile install.ps1
+
+                # Run installer
+                .\install.ps1
+
+                # Add to PATH
+                $env:PATH += ";$env:USERPROFILE\.veracode-cli"
+
+                # Verify
+                veracode --version
+
+          - task: PowerShell@2
+            displayName: 'Discover .NET Projects'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $env:PATH += ";$env:USERPROFILE\.veracode-cli"
+
+                Write-Host "Discovering .NET build configuration..."
+
+                veracode package discover `
+                  --source "$(Build.SourcesDirectory)" `
+                  --verbose
+
+          - task: PowerShell@2
+            displayName: 'Package .NET Application'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $env:PATH += ";$env:USERPROFILE\.veracode-cli"
+
+                # Create output directory
+                New-Item -ItemType Directory -Force -Path "$(ARTIFACTS_DIR)"
+
+                # Set .NET build configuration
+                $env:SRCCLR_MSVC_CONFIGURATION = "Release"
+                $env:SRCCLR_MSVC_PLATFORM = "x64"
+
+                Write-Host "Packaging .NET application..."
+                Write-Host "Configuration: $env:SRCCLR_MSVC_CONFIGURATION"
+                Write-Host "Platform: $env:SRCCLR_MSVC_PLATFORM"
+
+                veracode package `
+                  --source "$(Build.SourcesDirectory)" `
+                  --output "$(ARTIFACTS_DIR)" `
+                  --trust `
+                  --verbose
+
+                Get-ChildItem -Path "$(ARTIFACTS_DIR)"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-dotnet-package'
+
+  # ==========================================================================
+  # STAGE 4: JAVASCRIPT/NODE.JS PACKAGING
+  # ==========================================================================
+
+  - stage: PackageNodeJS
+    displayName: 'Package Node.js Application'
+    jobs:
+      - job: NodePackage
+        displayName: 'Node.js Packaging'
+        steps:
+          - task: NodeTool@0
+            displayName: 'Install Node.js'
+            inputs:
+              versionSpec: '18.x'
+
+          - task: Bash@3
+            displayName: 'Install CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+          - task: Bash@3
+            displayName: 'Package Node.js Application'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                echo "Packaging Node.js application..."
+
+                veracode package \
+                  --source "$(Build.SourcesDirectory)" \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose
+
+                ls -lh "$(ARTIFACTS_DIR)"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-nodejs-package'
+
+  # ==========================================================================
+  # STAGE 5: PYTHON PACKAGING
+  # ==========================================================================
+
+  - stage: PackagePython
+    displayName: 'Package Python Application'
+    jobs:
+      - job: PythonPackage
+        displayName: 'Python Packaging'
+        steps:
+          - task: UsePythonVersion@0
+            displayName: 'Setup Python'
+            inputs:
+              versionSpec: '3.11'
+
+          - task: Bash@3
+            displayName: 'Install CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+          - task: Bash@3
+            displayName: 'Package Python Application'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                echo "Packaging Python application..."
+
+                # Note: Projects without package manager will generate "no-pm" artifact
+                veracode package \
+                  --source "$(Build.SourcesDirectory)" \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose
+
+                echo "✓ Package created (may be 'no-pm' if no package manager)"
+                ls -lh "$(ARTIFACTS_DIR)"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-python-package'
+
+  # ==========================================================================
+  # STAGE 6: GO PACKAGING
+  # ==========================================================================
+
+  - stage: PackageGo
+    displayName: 'Package Go Application'
+    jobs:
+      - job: GoPackage
+        displayName: 'Go Packaging'
+        steps:
+          - task: GoTool@0
+            displayName: 'Setup Go'
+            inputs:
+              version: '1.21'
+
+          - task: Bash@3
+            displayName: 'Install CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+          - task: Bash@3
+            displayName: 'Package Go Application'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                # Enable CGO code generation if needed
+                export VERACODE_PACKAGE_GOLANG_GENERATE=true
+
+                echo "Packaging Go application..."
+                echo "CGO generation: $VERACODE_PACKAGE_GOLANG_GENERATE"
+
+                # Note: Nested Go modules are excluded
+                veracode package \
+                  --source "$(Build.SourcesDirectory)" \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose
+
+                ls -lh "$(ARTIFACTS_DIR)"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-go-package'
+
+  # ==========================================================================
+  # STAGE 7: GIT REPOSITORY PACKAGING
+  # ==========================================================================
+
+  - stage: PackageRepository
+    displayName: 'Package from Git Repository'
+    jobs:
+      - job: RepoPackage
+        displayName: 'Repository Packaging'
+        steps:
+          - task: Bash@3
+            displayName: 'Install CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+
+          - task: Bash@3
+            displayName: 'Package from GitHub Repository'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                echo "Packaging from GitHub repository..."
+
+                # Package from public repository
+                veracode package \
+                  --source https://github.com/veracode/verademo \
+                  --type repo \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose
+
+                echo "✓ Repository cloned, built, and packaged"
+                ls -lh "$(ARTIFACTS_DIR)"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-repo-package'
+
+  # ==========================================================================
+  # STAGE 8: PACKAGE + UPLOAD WORKFLOW
+  # ==========================================================================
+
+  - stage: PackageAndUpload
+    displayName: 'Complete Package + Upload Workflow'
+    jobs:
+      - job: CompleteWorkflow
+        displayName: 'Package and Upload to Veracode'
+        steps:
+          - task: Bash@3
+            displayName: 'Install CLI'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+                export PATH="$HOME/.veracode-cli:$PATH"
+                veracode --version
+
+          - task: Bash@3
+            displayName: 'Package Application'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                echo "Step 1: Packaging application..."
+
+                veracode package \
+                  --source "$(Build.SourcesDirectory)" \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose \
+                  --strict  # Exit code 4 on build failures
+
+                echo "✓ Packaging complete"
+                ls -lh "$(ARTIFACTS_DIR)"
+
+          - task: Bash@3
+            displayName: 'Upload for Policy Scan'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Step 2: Uploading to Veracode for Policy Scan..."
+
+                # Find the packaged artifact
+                ARTIFACT=$(find "$(ARTIFACTS_DIR)" -name "*.zip" -o -name "*.jar" | head -1)
+
+                if [ -z "$ARTIFACT" ]; then
+                  echo "❌ No artifact found in $(ARTIFACTS_DIR)"
+                  exit 1
+                fi
+
+                echo "Found artifact: $ARTIFACT"
+
+                # Upload using veracode static scan
+                veracode static scan \
+                  --source "$ARTIFACT" \
+                  --app "$(APP_NAME)" \
+                  --create-app \
+                  --sandbox-name "Azure-Pipeline-$(Build.BuildNumber)" \
+                  --results-file results.json
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+          - task: Bash@3
+            displayName: 'Alternative: Pipeline Scan'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+
+                echo "Alternative: Running Pipeline Scan instead..."
+
+                ARTIFACT=$(find "$(ARTIFACTS_DIR)" -name "*.zip" -o -name "*.jar" | head -1)
+
+                # Run Pipeline Scan for fast feedback
+                veracode static pipeline-scan \
+                  --file "$ARTIFACT" \
+                  --fail-on-severity "Very High,High" \
+                  --json-output-file pipeline-results.json
+            env:
+              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
+              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
+
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            displayName: 'Publish All Results'
+            inputs:
+              targetPath: '$(ARTIFACTS_DIR)'
+              artifact: 'veracode-complete-workflow'
+
+# ============================================================================
+# TROUBLESHOOTING EXAMPLES
+# ============================================================================
+
+  - stage: Troubleshooting
+    displayName: 'Troubleshooting Examples'
+    condition: false  # Disabled by default
+    jobs:
+      - job: DebugPackaging
+        displayName: 'Debug Packaging Issues'
+        steps:
+          - task: Bash@3
+            displayName: 'Verbose Packaging with Error Handling'
+            inputs:
+              targetType: 'inline'
+              script: |
+                export PATH="$HOME/.veracode-cli:$PATH"
+                mkdir -p "$(ARTIFACTS_DIR)"
+
+                echo "Running package with verbose output and error handling..."
+
+                # Use strict mode for better error detection
+                set -e
+
+                veracode package \
+                  --source "$(Build.SourcesDirectory)" \
+                  --output "$(ARTIFACTS_DIR)" \
+                  --trust \
+                  --verbose \
+                  --strict || {
+                    EXIT_CODE=$?
+                    echo "❌ Packaging failed with exit code: $EXIT_CODE"
+
+                    if [ $EXIT_CODE -eq 4 ]; then
+                      echo "Build failure detected (exit code 4)"
+                    fi
+
+                    exit $EXIT_CODE
+                  }
+
+                echo "✓ Packaging succeeded"
+
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+#
+# Package Command Flags:
+# --source (-s)     : Source location (required)
+# --trust (-a)      : Acknowledge source is trustworthy (required first use)
+# --output (-o)     : Output directory (default: current directory)
+# --type (-t)       : Source type: directory or repo (default: directory)
+# --verbose (-v)    : Show detailed output
+# --strict          : Return exit code 4 on build failures
+# --help (-h)       : Show help
+#
+# Environment Variables:
+# SRCCLR_CUSTOM_MAVEN_COMMAND    : Custom Maven arguments
+# VERACODE_PACKAGE_GOLANG_GENERATE : Enable Go CGO generation
+# SRCCLR_MSVC_CONFIGURATION      : .NET build configuration
+# SRCCLR_MSVC_PLATFORM           : .NET platform (x64, x86, ARM64)
+# SRCCLR_IOS_SCHEME              : iOS build scheme
+# SRCCLR_IOS_DESTINATION         : iOS platform
+# SRCCLR_MAKE_TARGETS            : Make targets
+# SRCCLR_MAKE_JOBS               : Make parallel jobs
+#
+# Supported Languages (25+):
+# - Java (Maven, Gradle)
+# - .NET (C#, VB.NET, F#)
+# - JavaScript/TypeScript (Node.js)
+# - Python
+# - Go
+# - iOS/Swift
+# - Android
+# - C/C++
+# - Ruby, PHP, Perl, and more
+#
+# Limitations:
+# - SCA Agent-based Scan NOT supported (use SCA Agent instead)
+# - Discover only supports MSBuild and Maven currently
+# - Repository packaging uses temporary clone
+# - Archives must not be password-protected
+# - UTF-8 encoding required
+#
+# Best Practices:
+# 1. Run "veracode package discover" first (for .NET/Maven)
+# 2. Use --verbose during initial setup
+# 3. Specify --output directory for organization
+# 4. Use --strict to catch build failures
+# 5. Test packaging locally before CI/CD integration
+#
+# Documentation:
+# - Package Command: https://docs.veracode.com/r/veracode_package
+# - CLI Reference: https://docs.veracode.com/r/CLI_Reference
+# - Autopackaging: https://docs.veracode.com/r/About_auto_packaging
+# - Compilation & Packaging: https://docs.veracode.com/r/compilation_packaging
+# ============================================================================

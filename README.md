@@ -24,6 +24,9 @@ Identifies open-source vulnerabilities and license risks in your dependencies.
 ### Policy Scan
 Comprehensive security scanning with policy compliance checks. Uploads your application (typically JAR files) to Veracode for thorough analysis.
 
+### Packaging
+Automated application packaging using the Veracode CLI `package` command. Auto-detects build tools, compiles code, and creates scannable artifacts for Static Analysis.
+
 ### CLI Operations
 Templates for various Veracode CLI commands including:
 - Results retrieval
@@ -79,6 +82,7 @@ See [docs/authentication.md](docs/authentication.md) for detailed setup instruct
 
 - [Setup Guide](docs/setup-guide.md) - Get started with Veracode integration
 - [Authentication](docs/authentication.md) - Configure API credentials
+- [Packaging Guide](docs/packaging-guide.md) - Using veracode package command
 - [Best Practices](docs/best-practices.md) - Tips for effective security scanning
 
 ## Usage Notes

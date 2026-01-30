@@ -1,0 +1,589 @@
+# ============================================================================
+# Veracode Packaging Examples - Bitbucket Pipelines
+# ============================================================================
+# This template demonstrates the Veracode CLI package command for automating
+# application packaging before Static Analysis scans.
+#
+# The veracode package command:
+# - Auto-detects build tools and dependencies
+# - Compiles code into scannable artifacts
+# - Packages into proper archive format
+# - Validates artifact completeness
+#
+# Use Cases:
+# - Upload and Scan (Policy Scan)
+# - Pipeline Scan
+# - NOT for SCA Agent-based Scan (use SCA Agent directly)
+#
+# Prerequisites:
+# - Veracode API credentials in Bitbucket variables
+# - Source code with build configuration
+# - Build tools available in Docker images
+#
+# Documentation:
+# - Package Command: https://docs.veracode.com/r/veracode_package
+# - Autopackaging: https://docs.veracode.com/r/About_auto_packaging
+# ============================================================================
+
+image: alpine:latest
+
+definitions:
+  caches:
+    maven: ~/.m2/repository
+    npm: node_modules
+    pip: ~/.cache/pip
+
+  # ========================================================================
+  # REUSABLE STEPS
+  # ========================================================================
+
+  steps:
+    - step: &package-discover
+        name: Discover Build Configuration
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Discovering build configuration..."
+
+          # Run package discover (supports MSBuild and Maven)
+          - |
+            veracode package discover \
+              --source . \
+              --verbose
+
+          # Show generated veracode.yml
+          - |
+            if [ -f veracode.yml ]; then
+              echo "Generated veracode.yml:"
+              cat veracode.yml
+            else
+              echo "No veracode.yml generated (not MSBuild or Maven project)"
+            fi
+
+        artifacts:
+          - veracode.yml
+
+    - step: &package-maven
+        name: Package Java (Maven)
+        image: maven:3.9-eclipse-temurin-17
+        script:
+          - echo "Installing Veracode CLI..."
+          - apt-get update && apt-get install -y curl
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Packaging Maven project..."
+          - mkdir -p veracode-artifacts
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - echo "✓ Packaging complete"
+          - ls -lh veracode-artifacts
+
+        artifacts:
+          - veracode-artifacts/**
+
+        caches:
+          - maven
+
+    - step: &package-maven-custom
+        name: Package Maven (Custom Config)
+        image: maven:3.9-eclipse-temurin-17
+        script:
+          - apt-get update && apt-get install -y curl
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Packaging with custom Maven command..."
+          - mkdir -p veracode-artifacts
+
+          # Set custom Maven arguments
+          - export SRCCLR_CUSTOM_MAVEN_COMMAND="clean install -DskipTests -P production"
+          - echo "Using: $SRCCLR_CUSTOM_MAVEN_COMMAND"
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - ls -lh veracode-artifacts
+
+        artifacts:
+          - veracode-artifacts/**
+
+        caches:
+          - maven
+
+    - step: &package-dotnet
+        name: Package .NET Application
+        image: mcr.microsoft.com/dotnet/sdk:8.0
+        script:
+          - echo "Installing Veracode CLI..."
+          - apt-get update && apt-get install -y curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Discovering .NET projects..."
+          - veracode package discover --source . --verbose
+
+          - echo "Packaging .NET application..."
+          - mkdir -p veracode-artifacts
+
+          # Set build configuration
+          - export SRCCLR_MSVC_CONFIGURATION=Release
+          - export SRCCLR_MSVC_PLATFORM=x64
+
+          - echo "Configuration: $SRCCLR_MSVC_CONFIGURATION"
+          - echo "Platform: $SRCCLR_MSVC_PLATFORM"
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - ls -lh veracode-artifacts
+
+        artifacts:
+          - veracode-artifacts/**
+
+    - step: &package-nodejs
+        name: Package Node.js Application
+        image: node:18-alpine
+        script:
+          - echo "Installing Veracode CLI..."
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Packaging Node.js application..."
+          - mkdir -p veracode-artifacts
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - ls -lh veracode-artifacts
+
+        artifacts:
+          - veracode-artifacts/**
+
+        caches:
+          - npm
+
+    - step: &package-python
+        name: Package Python Application
+        image: python:3.11-alpine
+        script:
+          - echo "Installing Veracode CLI..."
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Packaging Python application..."
+          - echo "Note: Projects without package manager will generate 'no-pm' artifact"
+          - mkdir -p veracode-artifacts
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - ls -lh veracode-artifacts
+
+        artifacts:
+          - veracode-artifacts/**
+
+        caches:
+          - pip
+
+    - step: &package-go
+        name: Package Go Application
+        image: golang:1.21-alpine
+        script:
+          - echo "Installing Veracode CLI..."
+          - apk add --no-cache curl bash git
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Packaging Go application..."
+          - mkdir -p veracode-artifacts
+
+          # Enable CGO code generation if needed
+          - export VERACODE_PACKAGE_GOLANG_GENERATE=true
+
+          - echo "CGO generation: $VERACODE_PACKAGE_GOLANG_GENERATE"
+          - echo "Note: Nested Go modules are excluded from packaging"
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - ls -lh veracode-artifacts
+
+        artifacts:
+          - veracode-artifacts/**
+
+    - step: &package-repository
+        name: Package from Git Repository
+        script:
+          - echo "Installing Veracode CLI..."
+          - apk add --no-cache curl bash git
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Packaging from GitHub repository..."
+          - mkdir -p veracode-artifacts
+
+          # Package from public repository
+          - |
+            veracode package \
+              --source https://github.com/veracode/verademo \
+              --type repo \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - echo "✓ Repository packaged successfully"
+          - ls -lh veracode-artifacts
+
+        artifacts:
+          - veracode-artifacts/**
+
+    - step: &package-and-upload
+        name: Package + Upload to Veracode
+        image: maven:3.9-eclipse-temurin-17
+        script:
+          - echo "Installing Veracode CLI..."
+          - apt-get update && apt-get install -y curl
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+          - veracode --version
+
+          - echo "Step 1: Packaging application..."
+          - mkdir -p veracode-artifacts
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose \
+              --strict
+
+          - echo "✓ Packaging complete"
+          - ls -lh veracode-artifacts
+
+          - echo "Step 2: Uploading to Veracode for Policy Scan..."
+
+          # Find the packaged artifact
+          - ARTIFACT=$(find veracode-artifacts -name "*.zip" -o -name "*.jar" | head -1)
+
+          - |
+            if [ -z "$ARTIFACT" ]; then
+              echo "❌ No artifact found in veracode-artifacts"
+              exit 1
+            fi
+
+          - echo "Found artifact: $ARTIFACT"
+
+          # Upload using veracode static scan
+          - |
+            veracode static scan \
+              --source "$ARTIFACT" \
+              --app "${BITBUCKET_REPO_SLUG}" \
+              --create-app \
+              --sandbox-name "Bitbucket-${BITBUCKET_BUILD_NUMBER}" \
+              --results-file results.json
+
+        artifacts:
+          - veracode-artifacts/**
+          - results.json
+
+    - step: &package-and-pipeline-scan
+        name: Package + Pipeline Scan
+        image: maven:3.9-eclipse-temurin-17
+        script:
+          - apt-get update && apt-get install -y curl
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Packaging application..."
+          - mkdir -p veracode-artifacts
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose
+
+          - echo "Running Pipeline Scan..."
+
+          - ARTIFACT=$(find veracode-artifacts -name "*.zip" -o -name "*.jar" | head -1)
+
+          # Run Pipeline Scan for fast feedback
+          - |
+            veracode static pipeline-scan \
+              --file "$ARTIFACT" \
+              --fail-on-severity "Very High,High" \
+              --json-output-file pipeline-results.json
+
+        artifacts:
+          - veracode-artifacts/**
+          - pipeline-results.json
+
+    - step: &debug-packaging
+        name: Debug Packaging Issues
+        script:
+          - apk add --no-cache curl bash
+          - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          - export PATH="$HOME/.veracode-cli:$PATH"
+
+          - echo "Running package with verbose output and error handling..."
+          - mkdir -p veracode-artifacts
+
+          - set -e  # Exit on error
+
+          - |
+            veracode package \
+              --source . \
+              --output veracode-artifacts \
+              --trust \
+              --verbose \
+              --strict || {
+                EXIT_CODE=$?
+                echo "❌ Packaging failed with exit code: $EXIT_CODE"
+
+                if [ $EXIT_CODE -eq 4 ]; then
+                  echo "Build failure detected (exit code 4)"
+                fi
+
+                exit $EXIT_CODE
+              }
+
+          - echo "✓ Packaging succeeded"
+
+# ============================================================================
+# PIPELINES
+# ============================================================================
+
+pipelines:
+  # ========================================================================
+  # CUSTOM PIPELINES
+  # ========================================================================
+
+  custom:
+    # Discovery
+    package-discover:
+      - step: *package-discover
+
+    # Language-specific packaging
+    package-maven:
+      - step: *package-maven
+
+    package-maven-custom:
+      - step: *package-maven-custom
+
+    package-dotnet:
+      - step: *package-dotnet
+
+    package-nodejs:
+      - step: *package-nodejs
+
+    package-python:
+      - step: *package-python
+
+    package-go:
+      - step: *package-go
+
+    # Repository packaging
+    package-repository:
+      - step: *package-repository
+
+    # Complete workflows
+    package-and-upload:
+      - step: *package-and-upload
+
+    package-and-pipeline-scan:
+      - step: *package-and-pipeline-scan
+
+    # Troubleshooting
+    debug-packaging:
+      - step: *debug-packaging
+
+    # ======================================================================
+    # Multi-language project packaging (parallel)
+    # ======================================================================
+
+    package-all-languages:
+      - parallel:
+        - step: *package-maven
+        - step: *package-nodejs
+        - step: *package-python
+
+    # ======================================================================
+    # Complete workflow with discover
+    # ======================================================================
+
+    complete-workflow:
+      - step: *package-discover
+      - step: *package-maven
+      - step: *package-and-upload
+
+# ============================================================================
+# ADVANCED EXAMPLES
+# ============================================================================
+
+# ============================================================================
+# EXAMPLE: Monorepo with Multiple Projects
+# ============================================================================
+
+# pipelines:
+#   custom:
+#     monorepo-packaging:
+#       - parallel:
+#         - step:
+#             name: Package Frontend
+#             image: node:18-alpine
+#             script:
+#               - cd frontend
+#               - apk add --no-cache curl bash
+#               - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+#               - export PATH="$HOME/.veracode-cli:$PATH"
+#               - mkdir -p ../veracode-artifacts/frontend
+#               - veracode package --source . --output ../veracode-artifacts/frontend --trust
+#             artifacts:
+#               - veracode-artifacts/frontend/**
+#
+#         - step:
+#             name: Package Backend
+#             image: maven:3.9-eclipse-temurin-17
+#             script:
+#               - cd backend
+#               - apt-get update && apt-get install -y curl
+#               - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+#               - export PATH="$HOME/.veracode-cli:$PATH"
+#               - mkdir -p ../veracode-artifacts/backend
+#               - veracode package --source . --output ../veracode-artifacts/backend --trust
+#             artifacts:
+#               - veracode-artifacts/backend/**
+
+# ============================================================================
+# EXAMPLE: Conditional Deployment After Successful Packaging
+# ============================================================================
+
+# pipelines:
+#   branches:
+#     main:
+#       - step: *package-maven
+#       - step: *package-and-upload
+#       - step:
+#           name: Deploy to Production
+#           deployment: production
+#           trigger: manual  # Only deploy if packaging passed
+#           script:
+#             - echo "Package scan passed - safe to deploy"
+#             - echo "Deploy your application here"
+
+# ============================================================================
+# EXAMPLE: Package and Store Artifacts Long-term
+# ============================================================================
+
+# pipelines:
+#   tags:
+#     'v*':
+#       - step:
+#           name: Package Release
+#           image: maven:3.9-eclipse-temurin-17
+#           script:
+#             - apt-get update && apt-get install -y curl
+#             - curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+#             - export PATH="$HOME/.veracode-cli:$PATH"
+#             - mkdir -p veracode-artifacts
+#
+#             # Package for release
+#             - veracode package --source . --output veracode-artifacts --trust --verbose
+#
+#             # Upload to Bitbucket Downloads (long-term storage)
+#             - |
+#               ARTIFACT=$(find veracode-artifacts -name "*.zip" -o -name "*.jar" | head -1)
+#               curl -X POST \
+#                 -u "${BITBUCKET_USER}:${BITBUCKET_APP_PASSWORD}" \
+#                 -F files=@"$ARTIFACT" \
+#                 "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_REPO_OWNER}/${BITBUCKET_REPO_SLUG}/downloads"
+#
+#           artifacts:
+#             - veracode-artifacts/**
+
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+#
+# Package Command Flags:
+# --source (-s)     : Source location (required)
+# --trust (-a)      : Acknowledge source is trustworthy (required first use)
+# --output (-o)     : Output directory (default: current directory)
+# --type (-t)       : Source type: directory or repo (default: directory)
+# --verbose (-v)    : Show detailed output
+# --strict          : Return exit code 4 on build failures
+# --help (-h)       : Show help
+#
+# Environment Variables:
+# SRCCLR_CUSTOM_MAVEN_COMMAND    : Custom Maven arguments
+# VERACODE_PACKAGE_GOLANG_GENERATE : Enable Go CGO generation
+# SRCCLR_MSVC_CONFIGURATION      : .NET build configuration
+# SRCCLR_MSVC_PLATFORM           : .NET platform (x64, x86, ARM64)
+# SRCCLR_IOS_SCHEME              : iOS build scheme
+# SRCCLR_IOS_DESTINATION         : iOS platform
+# SRCCLR_MAKE_TARGETS            : Make targets
+# SRCCLR_MAKE_JOBS               : Make parallel jobs
+#
+# Bitbucket Variables Required:
+# - VERACODE_API_ID (for upload jobs)
+# - VERACODE_API_KEY (for upload jobs)
+# - BITBUCKET_REPO_SLUG (automatic)
+# - BITBUCKET_BUILD_NUMBER (automatic)
+#
+# Supported Languages (25+):
+# Java, .NET, JavaScript, TypeScript, Python, Go, iOS, Android, C/C++, and more
+#
+# Limitations:
+# - SCA Agent-based Scan NOT supported (use SCA Agent instead)
+# - Discover only supports MSBuild and Maven currently
+# - Repository packaging uses temporary clone
+# - Archives must not be password-protected
+# - UTF-8 encoding required
+#
+# Best Practices:
+# 1. Run "veracode package discover" first (for .NET/Maven)
+# 2. Use --verbose during initial setup
+# 3. Specify --output directory for organization
+# 4. Use --strict to catch build failures
+# 5. Test packaging locally before CI/CD integration
+# 6. Use parallel steps for monorepos
+#
+# Documentation:
+# - Package Command: https://docs.veracode.com/r/veracode_package
+# - CLI Reference: https://docs.veracode.com/r/CLI_Reference
+# - Autopackaging: https://docs.veracode.com/r/About_auto_packaging
+# - Compilation & Packaging: https://docs.veracode.com/r/compilation_packaging
+# ============================================================================
