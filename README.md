@@ -105,7 +105,7 @@ Contributions are welcome! If you have improvements or additional templates:
 
 - [Veracode Documentation](https://docs.veracode.com/)
 - [Veracode CLI Documentation](https://docs.veracode.com/r/Veracode_CLI)
-- [Veracode API Documentation](https://docs.veracode.com/r/c_about_veracode_apis)
+- [Veracode API Documentation](https://docs.veracode.com/r/Veracode_APIs)
 
 ## License
 

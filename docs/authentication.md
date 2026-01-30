@@ -287,7 +287,7 @@ Ensure your credential management meets:
 
 ## Resources
 
-- [Veracode API Documentation](https://docs.veracode.com/r/c_about_veracode_apis)
+- [Veracode API Documentation](https://docs.veracode.com/r/Veracode_APIs)
 - [API Credentials Management](https://docs.veracode.com/r/c_api_credentials3)
 - [Veracode Security Best Practices](https://docs.veracode.com/r/Veracode_Best_Practices)
 
