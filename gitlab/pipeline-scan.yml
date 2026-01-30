@@ -17,7 +17,7 @@
 # Usage:
 # Copy the relevant stages/jobs into your .gitlab-ci.yml file
 #
-# Documentation: https://docs.veracode.com/r/c_about_pipeline_scan
+# Documentation: https://docs.veracode.com/r/Pipeline_Scan
 # ============================================================================
 
 # ============================================================================

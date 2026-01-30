@@ -21,7 +21,7 @@
 #
 # Usage: Copy relevant stages/jobs into your .gitlab-ci.yml file
 #
-# Documentation: https://docs.veracode.com/r/About_Static_Analysis
+# Documentation: https://docs.veracode.com/r/Veracode_Upload_and_Scan
 # ============================================================================
 
 # ============================================================================

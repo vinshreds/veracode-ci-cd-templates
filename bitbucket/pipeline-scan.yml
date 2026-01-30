@@ -17,7 +17,7 @@
 # Usage:
 # Copy this content into your bitbucket-pipelines.yml file or merge with existing config
 #
-# Documentation: https://docs.veracode.com/r/c_about_pipeline_scan
+# Documentation: https://docs.veracode.com/r/Pipeline_Scan
 # ============================================================================
 
 # ============================================================================

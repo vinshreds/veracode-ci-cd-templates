@@ -19,7 +19,7 @@
 # - Application compiled/packaged (JAR, WAR, ZIP, etc.)
 # - Veracode application profile created (or auto-created)
 #
-# Documentation: https://docs.veracode.com/r/About_Static_Analysis
+# Documentation: https://docs.veracode.com/r/Veracode_Upload_and_Scan
 # ============================================================================
 
 name: Veracode Policy Scan

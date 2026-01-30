@@ -21,7 +21,7 @@
 #
 # Usage: Copy this into your bitbucket-pipelines.yml or merge with existing
 #
-# Documentation: https://docs.veracode.com/r/About_Static_Analysis
+# Documentation: https://docs.veracode.com/r/Veracode_Upload_and_Scan
 # ============================================================================
 
 # ============================================================================

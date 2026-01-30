@@ -12,7 +12,7 @@
 # - Application compiled/packaged (JAR, WAR, ZIP, etc.)
 # - Veracode Pipeline Scanner (downloaded during pipeline execution)
 #
-# Documentation: https://docs.veracode.com/r/c_about_pipeline_scan
+# Documentation: https://docs.veracode.com/r/Pipeline_Scan
 # ============================================================================
 
 trigger:
