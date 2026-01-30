@@ -19,7 +19,7 @@
 # - Dependency manifest files (pom.xml, package.json, requirements.txt, etc.)
 # - Source code with dependency declarations
 #
-# Documentation: https://docs.veracode.com/r/About_Software_Composition_Analysis
+# Documentation: https://docs.veracode.com/r/Agent_Based_Scans
 # ============================================================================
 
 trigger:
@@ -422,5 +422,5 @@ stages:
 #    - Use custom scripts to parse JSON output
 #    - Define acceptable licenses in your organization
 #
-# For more help: https://docs.veracode.com/r/c_sc_what_is
+# For more help: https://docs.veracode.com/r/Agent_Based_Scans
 # ============================================================================

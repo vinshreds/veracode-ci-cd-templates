@@ -428,7 +428,7 @@ export SRCCLR_API_TOKEN="your-sca-token"
 - ✅ `./ci.sh scan` - Correct SCA Agent command
 - ✅ `./ci.sh sbom` - Correct SCA Agent command
 
-**Documentation:** [SCA Agent Documentation](https://docs.veracode.com/r/c_sc_what_is)
+**Documentation:** [SCA Agent Documentation](https://docs.veracode.com/r/Agent_Based_Scans)
 
 ---
 
@@ -690,7 +690,7 @@ All commands verified against official Veracode documentation (January 2026):
 - **Package Command:** https://docs.veracode.com/r/veracode_package
 - **Autopackaging:** https://docs.veracode.com/r/About_auto_packaging
 - **CLI Updates:** https://docs.veracode.com/updates/r/Veracode_CLI_Updates
-- **SCA Agent:** https://docs.veracode.com/r/c_sc_what_is
+- **SCA Agent:** https://docs.veracode.com/r/Agent_Based_Scans
 - **API Documentation:** https://docs.veracode.com/r/c_about_veracode_apis
 
 ---

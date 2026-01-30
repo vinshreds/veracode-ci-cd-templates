@@ -19,7 +19,7 @@
 # - Dependency manifest files (pom.xml, package.json, requirements.txt, etc.)
 # - Source code with dependency declarations
 #
-# Documentation: https://docs.veracode.com/r/About_Software_Composition_Analysis
+# Documentation: https://docs.veracode.com/r/Agent_Based_Scans
 # ============================================================================
 
 name: Veracode SCA Scan
@@ -525,6 +525,6 @@ jobs:
 #    - Cache dependencies with actions/cache
 #    - Scan only on specific events
 #
-# For more help: https://docs.veracode.com/r/c_sc_what_is
+# For more help: https://docs.veracode.com/r/Agent_Based_Scans
 # GitHub Action: https://github.com/veracode/veracode-sca
 # ============================================================================

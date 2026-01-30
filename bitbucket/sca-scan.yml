@@ -21,7 +21,7 @@
 #
 # Usage: Copy into your bitbucket-pipelines.yml or merge with existing
 #
-# Documentation: https://docs.veracode.com/r/About_Software_Composition_Analysis
+# Documentation: https://docs.veracode.com/r/Agent_Based_Scans
 # ============================================================================
 
 # ============================================================================
@@ -478,6 +478,6 @@ pipelines:
 #    - Upgrade plan for more parallelism
 #
 # For more help:
-# - Veracode: https://docs.veracode.com/r/c_sc_what_is
+# - Veracode: https://docs.veracode.com/r/Agent_Based_Scans
 # - Bitbucket: https://support.atlassian.com/bitbucket-cloud/docs/
 # ============================================================================

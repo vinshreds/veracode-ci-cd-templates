@@ -395,7 +395,7 @@ stages:
   #   - ./ci.sh scan --app <name>
   #   - ./ci.sh sbom --format cyclonedx
   #
-  # See: https://docs.veracode.com/r/c_sc_what_is
+  # See: https://docs.veracode.com/r/Agent_Based_Scans
   # ==========================================================================
   # CUSTOM API OPERATIONS
   # ==========================================================================
