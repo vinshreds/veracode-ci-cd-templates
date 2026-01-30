@@ -305,33 +305,23 @@ jobs:
           path: flaws.json
 
   # ==========================================================================
-  # SCA CLI OPERATIONS
+  # NOTE: SCA Is NOT Part of Veracode CLI
   # ==========================================================================
-
-  sca-cli:
-    name: SCA CLI Operations
-    runs-on: ubuntu-latest
-    if: github.event.inputs.operation == 'all-examples'
-
-    steps:
-      - name: Install CLI
-        run: curl -fsS https://tools.veracode.com/veracode-cli/install | sh
-
-      - name: SCA Operations
-        run: |
-          export PATH="$HOME/.veracode-cli:$PATH"
-
-          # Get SCA results
-          veracode sca results \
-            --app "${{ env.APP_NAME }}" \
-            --format json \
-            --output sca-results.json
-
-          # List workspaces
-          veracode sca workspace list
-        env:
-          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
-          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+  # SCA scanning uses the SCA Agent (ci.sh), NOT the Veracode CLI.
+  # See the sca-scan.yml workflow for proper SCA integration using ci.sh
+  #
+  # INCORRECT (does not exist):
+  #   - veracode sca scan
+  #   - veracode sca results
+  #   - veracode sca vulnerabilities
+  #
+  # CORRECT (use SCA Agent):
+  #   - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+  #   - ./ci.sh scan --app <name>
+  #   - ./ci.sh sbom --format cyclonedx
+  #
+  # See: https://docs.veracode.com/r/c_sc_what_is
+  # ==========================================================================
 
 # ============================================================================
 # CLI COMMAND REFERENCE

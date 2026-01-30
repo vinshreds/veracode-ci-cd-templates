@@ -381,43 +381,21 @@ stages:
               VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
 
   # ==========================================================================
-  # SCA CLI OPERATIONS
+  # NOTE: SCA Is NOT Part of Veracode CLI
   # ==========================================================================
-
-  - stage: SCACLIOps
-    displayName: 'SCA CLI Operations'
-    jobs:
-      - job: SCAOperations
-        displayName: 'SCA CLI Examples'
-        steps:
-          - task: Bash@3
-            displayName: 'SCA CLI Operations'
-            inputs:
-              targetType: 'inline'
-              script: |
-                curl -fsS https://tools.veracode.com/veracode-cli/install | sh
-                export PATH="$HOME/.veracode-cli:$PATH"
-
-                # Get SCA results
-                echo "Getting SCA results for $(APP_NAME)..."
-                veracode sca results \
-                  --app "$(APP_NAME)" \
-                  --format json \
-                  --output sca-results.json
-
-                # Get workspace info
-                echo -e "\nGetting SCA workspace info..."
-                veracode sca workspace list
-
-                # Get vulnerability details
-                echo -e "\nGetting vulnerability summary..."
-                veracode sca vulnerabilities \
-                  --app "$(APP_NAME)" \
-                  --format table
-            env:
-              VERACODE_API_KEY_ID: $(VERACODE_API_ID)
-              VERACODE_API_KEY_SECRET: $(VERACODE_API_KEY)
-
+  # SCA scanning uses the SCA Agent (ci.sh), NOT the Veracode CLI.
+  # See the sca-scan.yml template for proper SCA integration using ci.sh
+  #
+  # INCORRECT (does not exist):
+  #   - veracode sca scan
+  #   - veracode sca results
+  #   - veracode sca vulnerabilities
+  #
+  # CORRECT (use SCA Agent):
+  #   - ./ci.sh scan --app <name>
+  #   - ./ci.sh sbom --format cyclonedx
+  #
+  # See: https://docs.veracode.com/r/c_sc_what_is
   # ==========================================================================
   # CUSTOM API OPERATIONS
   # ==========================================================================
@@ -488,11 +466,12 @@ stages:
 # - veracode static findings --app <name>
 # - veracode static flaw annotate --app <name> --flaw-id <id>
 #
-# SCA Commands:
-# - veracode sca scan --source <path>
-# - veracode sca results --app <name>
-# - veracode sca vulnerabilities --app <name>
-# - veracode sca workspace list
+# ⚠️ SCA Commands - NOT PART OF VERACODE CLI:
+# SCA uses the SCA Agent (ci.sh), NOT the Veracode CLI
+# See sca-scan.yml template for proper SCA integration
+# - curl -sSL https://download.sourceclear.com/ci.sh -o ci.sh
+# - ./ci.sh scan --app <name>
+# - ./ci.sh sbom --format cyclonedx
 #
 # Pipeline Scan:
 # - veracode pipeline scan --file <path>
