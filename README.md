@@ -83,6 +83,7 @@ See [docs/authentication.md](docs/authentication.md) for detailed setup instruct
 - [Setup Guide](docs/setup-guide.md) - Get started with Veracode integration
 - [Authentication](docs/authentication.md) - Configure API credentials
 - [Packaging Guide](docs/packaging-guide.md) - Using veracode package command
+- [CLI Command Reference](docs/cli-command-reference.md) - Complete Veracode CLI commands
 - [Best Practices](docs/best-practices.md) - Tips for effective security scanning
 
 ## Usage Notes
